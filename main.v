@@ -19,7 +19,6 @@ module TSPI(input CLK,
 	output reg MEM_CE // active high to read.
 	);
 
-
 // regs for control GPIO
 reg SD1, SD2, SD3;
 // assign each Serial output pins to regs 
@@ -29,6 +28,10 @@ assign SOUT3 = SD3;
 
 // Keep track of current bit that shifting out.
 reg [9:0] BitCounter;
+
+// LUTs for converting the (MSB)abcdef(LSB) to (MSB)afbecd(LSB) format require by display.
+reg [1:0] ConvLUT [5:0]; 
+reg [1:0] pixLUT [5:0];
 
 // Tri-SPI clock running the same freq as System clock.
 // But can be completely disabled by set SCE to 0.
@@ -40,6 +43,20 @@ initial begin
 	SD1 = 0;
 	SD2 = 0;
 	SD3 = 0;
+	ConvLUT[0] = 3;//a
+	ConvLUT[1] = 0;//f
+	ConvLUT[2] = 0;//b
+	ConvLUT[3] = 3;//e
+	ConvLUT[4] = 3;//c
+	ConvLUT[5] = 0;//d
+	
+	pixLUT[0] = 0;
+	pixLUT[1] = 2;
+	pixLUT[2] = 0;
+	pixLUT[3] = 2;
+	pixLUT[4] = 1;
+	pixLUT[5] = 1;
+	
 end
 
 
@@ -60,6 +77,7 @@ always@(posedge S_CLK) begin
 		// [Byte2926] [Byte2927] [Byte2928] ... [Byte3003] --- ROW38
 		
 		// 2 Grids share same 6 bit-wide data, We send 6bit pixels data for 39 times (Vertically from to to bottom in perspective of Display dot arrangement).
+		
 		// GN / 2 -> will gives us as if Grid N or N+1 in currently displaying, Which byte column we need to read from Display "mem"
 		// BitCounter/6 -> serve as a "every 6 bit" counter, every time 6 bit has been send, we move to new row but still in the same column.
 		// from that be can calculate the absolute position of byte on array by multiply by column number (77).
@@ -76,14 +94,20 @@ always@(posedge S_CLK) begin
 		// Note that I use && instead of &, that because I want the check bit not to do "and" operation.
 		// This will returns either 1 or 0. 1 means that bit on "mem" is = 1 thus pixel on and vice versa.*/
 		
+		
+		// TODO : Make the "turn grid on" work.
 		if(BitCounter < 234)// Bit 0 - 233 are pixel data
 			begin
 			// Store mem Address to this. and later read data from MEM_BYTE;
-			MEM_ADDR <= (GN / 2) + (BitCounter / 6)*77;
+			MEM_CE <= 1;
+			//MEM_ADDR <= (GN / 2) + (BitCounter / 6)*77;
+			MEM_ADDR <= /*on ram afbecd pixel column locator*/pixLUT[BitCounter%6] + /*Grid number select byte 0,1,2 3,4,5 or so on*/ 3*(GN/2) + /* row selector */ (BitCounter / 6)*77;
 			
-			SD1 <= MEM_BYTE && (1 << (BitCounter % 6));
-			SD2 <= MEM_BYTE && (1 << (BitCounter % 6));
-			SD3 <= MEM_BYTE	&& (1 << (BitCounter % 6));
+			//ConvLUT use for switching between a,c,e or b,d,f on memory byte 
+			// since the structure looks like this 00aaabbb 00cccddd 00eeefff and repeat. 
+			SD1 <= MEM_BYTE && (1 << ((BitCounter % 6) + ConvLUT[BitCounter%6]));
+			SD2 <= MEM_BYTE && (1 << ((BitCounter % 6)+ 1 + ConvLUT[BitCounter%6]));// + 1 to shift to 2nd bit of Grayscale bit.
+			SD3 <= MEM_BYTE	&& (1 << ((BitCounter % 6)+ 2 + ConvLUT[BitCounter%6]));// +2 to shift to 3rd bit of Grayscale bit.
 			end
 		
 		// after bit 233, bit 234 (and so on) are Grid Number bit.
@@ -291,7 +315,8 @@ end
 
 // Generate this part every 1/60 sec.
 always@(posedge clk_fps) begin
-
+	// total time 25us 
+	
 	// Start Tranmission by Display blanking
 	BLK_CTRL = 1'b1;
 	#1
@@ -306,7 +331,7 @@ always@(posedge clk_fps) begin
 	if(GridNum == 53)// MN15439A has 52 Grids, reset them when exceed 52.
 		GridNum <= 0;
 	else
-		GridNum = GridNum + 1;
+		GridNum <= GridNum + 1;
 		
 	if(SCS)
 		SPI_start = 1;
