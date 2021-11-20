@@ -1,0 +1,6 @@
+# Ignore nonsense files
+*.out
+*.asc
+*.blif
+*.json
+*.bin
