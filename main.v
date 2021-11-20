@@ -1,3 +1,4 @@
+/* VFDHackICE */
 // TSPI - Tri SPI. Specially designed for MN15439A, Vacuum Fluorescent Display Dot Matrix Graphic Display.
 // Capable of producing 8 levels grayscale (including Dot turned of).
 // Running on Lattice iCE40LP1K little tiny FPGA using iCESugar nano board.
@@ -30,6 +31,7 @@ assign SOUT3 = SD3;
 reg [9:0] BitCounter;
 
 // Tri-SPI clock running the same freq as System clock.
+// But can be completely disabled by set SCE to 0.
 assign S_CLK = CLK & SCE;
 
 initial begin
@@ -48,7 +50,7 @@ always@(posedge S_CLK) begin
 		else 
 			BitCounter <= BitCounter + 1;// count bit number / clock cycle.
 
-		// use BitCounter to calculate the memory offset to shift data out.
+		/* use BitCounter to calculate the memory offset to shift data out.
 		// We treat the plain linear 3003 bytes mem as 77 byte wide (column) and 39 byte tall (roll).
 		// Col0		Col1	Col2	...	Col76
 		// [Byte0]	[Byte1]	[Byte2]	... [Byte76] --- ROW0
@@ -72,7 +74,7 @@ always@(posedge S_CLK) begin
 		// Bitcounter % 6 -> Will give us 0-5 output.
 		
 		// Note that I use && instead of &, that because I want the check bit not to do "and" operation.
-		// This will returns either 1 or 0. 1 means that bit on "mem" is = 1 thus pixel on and vice versa.
+		// This will returns either 1 or 0. 1 means that bit on "mem" is = 1 thus pixel on and vice versa.*/
 		
 		if(BitCounter < 234)// Bit 0 - 233 are pixel data
 			begin
@@ -126,6 +128,7 @@ integer counter; // keep track of SPI clock to generate proper GCP signal, count
 initial begin 
 	counter = 0;
 end
+
 
 // counting every clock cycle.
 always @(posedge CLK & PCE) begin
@@ -284,7 +287,6 @@ always@(posedge CLK) begin
 		clk_60Hz <= 17'b0;
 	end
 	
-
 end
 
 // Generate this part every 1/60 sec.
