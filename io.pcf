@@ -1,0 +1,24 @@
+# Clock generated via on board STM32 clone that ack as USB iCELink on iCESugar nano board.
+set_io CLK 	D1
+
+# Tri SPI output pins to MN15439.
+
+# Serial data
+set_io S1 	A1
+set_io S2	B1
+set_io S3	C2
+
+#serial clock
+set_io SCK	E1
+
+# Blank and Latch signal
+set_io BLK	E3
+set_io LAT	B5
+
+# GCP pulse output pin for generating Grayscale image
+set_io PWM	C6
+
+# FPGA's slave SPI interface as Framebuffer input.
+set_io SSI	B3
+set_io SSCK	A3
+set_io SCS	C5
