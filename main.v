@@ -38,24 +38,24 @@ reg [1:0] pixLUT [5:0];
 assign S_CLK = CLK & SCE;
 
 initial begin
-	BitCounter = 0;
+	BitCounter <= 0;
 
-	SD1 = 0;
-	SD2 = 0;
-	SD3 = 0;
-	ConvLUT[0] = 3;//a
-	ConvLUT[1] = 0;//f
-	ConvLUT[2] = 0;//b
-	ConvLUT[3] = 3;//e
-	ConvLUT[4] = 3;//c
-	ConvLUT[5] = 0;//d
+	SD1 <= 0;
+	SD2 <= 0;
+	SD3 <= 0;
+	ConvLUT[0] <= 3;//a
+	ConvLUT[1] <= 0;//f
+	ConvLUT[2] <= 0;//b
+	ConvLUT[3] <= 3;//e
+	ConvLUT[4] <= 3;//c
+	ConvLUT[5] <= 0;//d
 	
-	pixLUT[0] = 0;
-	pixLUT[1] = 2;
-	pixLUT[2] = 0;
-	pixLUT[3] = 2;
-	pixLUT[4] = 1;
-	pixLUT[5] = 1;
+	pixLUT[0] <= 0;
+	pixLUT[1] <= 2;
+	pixLUT[2] <= 0;
+	pixLUT[3] <= 2;
+	pixLUT[4] <= 1;
+	pixLUT[5] <= 1;
 	
 end
 
@@ -78,7 +78,7 @@ always@(posedge S_CLK) begin
 		
 		// 2 Grids share same 6 bit-wide data, We send 6bit pixels data for 39 times (Vertically from to to bottom in perspective of Display dot arrangement).
 		
-		// GN / 2 -> will gives us as if Grid N or N+1 in currently displaying, Which byte column we need to read from Display "mem"
+		// GN / 2 -> will gives us as if Grid N or N+1 in currently displaying, Which byte column we need to read from Display "MEM_BYTE"
 		// BitCounter/6 -> serve as a "every 6 bit" counter, every time 6 bit has been send, we move to new row but still in the same column.
 		// from that be can calculate the absolute position of byte on array by multiply by column number (77).
 		// (BitCounter/6)*77 -> give us the absolute position of byte, so we can read array in verical manner.
@@ -86,10 +86,11 @@ always@(posedge S_CLK) begin
 		// Sum everyting up we'll have
 		// (GN / 2) + (BitCounter / 6)*77
 		
-		// In the part of bit shifting, we have to loob counting 0 1 2 3 4 5 0 1 2 3 4 5 ... becase bit shift is a maksing to check whether that pixel bit is 1 or 0,
+		// In the part of bit shifting, we have to loob counting 0 1 2 3 4 5 0 1 2 3 4 5 ... becase bit shift is a masking to check whether that pixel bit is 1 or 0,
 		// so we can shift them out correctly. To calculate and the the 0-5 loop count everytime bit counter increase (with clock cycle).
 		// utilizing modulo, modulo is operation in Math that returns you "remain" of division instead of "division product"
-		// Bitcounter % 6 -> Will give us 0-5 output.
+		// Bitcounter % 6 -> Will give us 0-5 output.We then later use that with LUT name "ConvLUT" to properly shift bit to correct position.
+		// Thus we can check individual bit on MEM_BYTE.
 		
 		// Note that I use && instead of &, that because I want the check bit not to do "and" operation.
 		// This will returns either 1 or 0. 1 means that bit on "mem" is = 1 thus pixel on and vice versa.*/
@@ -105,9 +106,9 @@ always@(posedge S_CLK) begin
 			
 			//ConvLUT use for switching between a,c,e or b,d,f on memory byte 
 			// since the structure looks like this 00aaabbb 00cccddd 00eeefff and repeat. 
-			SD1 <= MEM_BYTE && (1 << ((BitCounter % 6) + ConvLUT[BitCounter%6]));
-			SD2 <= MEM_BYTE && (1 << ((BitCounter % 6)+ 1 + ConvLUT[BitCounter%6]));// + 1 to shift to 2nd bit of Grayscale bit.
-			SD3 <= MEM_BYTE	&& (1 << ((BitCounter % 6)+ 2 + ConvLUT[BitCounter%6]));// +2 to shift to 3rd bit of Grayscale bit.
+			SD1 <= MEM_BYTE && (1 << ConvLUT[BitCounter%6]);
+			SD2 <= MEM_BYTE && (1 << ( 1 + ConvLUT[BitCounter%6]));// + 1 to shift to 2nd bit of Grayscale bit.
+			SD3 <= MEM_BYTE	&& (1 << ( 2 + ConvLUT[BitCounter%6]));// +2 to shift to 3rd bit of Grayscale bit.
 			end
 		
 		// after bit 233, bit 234 (and so on) are Grid Number bit.
@@ -150,7 +151,7 @@ integer counter; // keep track of SPI clock to generate proper GCP signal, count
 
 // This is similar to declaring variable in void main() in c
 initial begin 
-	counter = 0;
+	counter <= 0;
 end
 
 
@@ -187,52 +188,70 @@ module SSPI (
 	input SCLK,
 	input SCE,
 	
-	input [11:0]M_ADDR,
+	output reg [11:0]M_ADDR,
 	output reg [7:0]M_BYTE,
-	input M_CE
+	output reg M_CE
 	);
 	
-//reg [7:0] SPIbuffer;
+reg [7:0] SPIbuffer;
 reg [11:0] byteBufCnt;// 12 bit counter for 3003 bytes data + 1 CMD bytes.
 reg [2:0] bitBufCnt;// 3-bit counter from 0-7
 
-
-// RAM thingy.
-// Using Embeded Block RAM for Display buffer 
-// Taken from TN1250 - Memory Usage Guide for iCE40 Devices 
-
-// We need total of 3003 Bytes of RAM, That equal to 24024 bits or memory
-// Each Block Ram consist of 4096 bits
-// In total we need 6 Blocks.
-
-// We mimick the Dual port BRAM (Since it requires separate R,W clock cycle, we can read it at the same time).
-// by just share Read clock and Write clock, Viola! Dual port R/W synced!
-
-reg [7:0] mem [3003:0];
-integer r;
-
-initial mem[0] = 255;// some init.
-
 always@(posedge SCLK & ~SCE) begin
 
-		if(!bitBufCnt) begin
-			bitBufCnt <= 0;
-			byteBufCnt++;
+		if(!bitBufCnt) begin// every 8 clock cycle.
+			bitBufCnt <= 0;// reset bit counter 
+			byteBufCnt <= byteBufCnt + 1;// counting how many bytes have been sampled.
+			M_BYTE <= SPIbuffer;// copy the freshly made byte to mem.
+			M_CE <= 1;// at the same time, turn write enable on.
 			end
 		else
 			bitBufCnt <= bitBufCnt + 1;// keep tack of bit 		
+		
+		M_ADDR <= byteBufCnt;// byte counter keep tracks of memory address (byte number 0 = mem[0], byte number 1 = mem[1] and so on).
 			
-		mem[byteBufCnt] <= mem[byteBufCnt] | (MOSI << bitBufCnt);// storing each bit into 8bit reg.
-
-		if(M_CE)
-			M_BYTE <= mem[M_ADDR];
-		else 
-			M_BYTE <= 'hFF;
+		SPIbuffer[bitBufCnt] <= MOSI;// storing each bit into 8bit reg.
 	
 end// always@
 
+// Host release SPI chip select. logic lvl goes back to HIGH
+always@(posedge SCE)begin
+	M_CE = 0;// DIsable mem write.
+	bitBufCnt = 0;// reset counter
+	byteBufCnt = 0;// reset byte counter.
+end
+
 endmodule
 
+// Using BRAM as Graphic RAM.
+module GRAM(
+	input CLK,
+	input W_CLK,
+	
+	input [7:0]GRAM_IN,
+	output reg [7:0]GRAM_OUT,
+	
+	input [11:0] GRAM_ADDR_R,
+	input [11:0] GRAM_ADDR_W,
+	
+	input G_CE_W,
+	input G_CE_R);
+	
+reg [7:0] mem [3003:0];
+
+initial mem[0] <= 255;
+
+always@(posedge CLK) begin// reading from RAM sync with system clock 
+	if(G_CE_R)
+		GRAM_OUT <= mem[GRAM_ADDR_R];	
+end	
+
+always@(posedge W_CLK) begin// writing to RAM sync with Slave SPI clock.
+	if(G_CE_W)
+		mem[GRAM_ADDR_W] <= GRAM_IN;
+end
+	
+endmodule 
 
 module top(input CLK, 
 	output wire S1, // Serial data 1 (VFD)
@@ -266,6 +285,10 @@ wire [11:0] GRAM_ADDR; // Graphic RAM address, just the alternative name of MEM_
 wire [7:0] GRAM_BYTE;
 wire GRAM_CE;
 
+wire [11:0] GRAM_ADDR_W_SPI;
+wire [7:0] GRAM_SPI_READ;
+wire GRAM_CEW;
+
 // Gradient Control Pulse 
 GCPCLK Gradient(
 	.CLK(CLK), 
@@ -295,25 +318,42 @@ SSPI SerialIN(
 	.SCLK(SSCK), 
 	.SCE(SCS),
 	
-	.M_ADDR(GRAM_ADDR),
-	.M_BYTE(GRAM_BYTE),
-	.M_CE(GRAM_CE)
+	.M_ADDR(GRAM_ADDR_W_SPI),
+	.M_BYTE(GRAM_SPI_READ),
+	.M_CE(GRAM_CEW)
 	);// parse all pins for using as Slave SPI device.
 
+GRAM GraphicRAM(
+	.CLK(CLK),
+	.W_CLK(SSCK),
+	
+	// Mem writeto part, used by Slave SPI.
+	.GRAM_IN(GRAM_SPI_READ),
+	.GRAM_ADDR_W(GRAM_ADDR_W_SPI),
+	.G_CE_W(GRAM_CEW),
+	
+	// Mem readback part, used by Tri-SPI module
+	.GRAM_OUT(GRAM_BYTE),
+	.GRAM_ADDR_R(GRAM_ADDR),
+	.G_CE_R(GRAM_CE)
+	);// parse all regs and wires for GRAM.
+	
 
 // Things that work at System clock 
 always@(posedge CLK) begin
 	
 	// Generate 60Hz clock for display refreshing. Generated from 12MHz input clock
+	// actually it's 3120Hz (each frame need to update display 52 times (52 grids), we want 60fps, 1 frame last 1/(60*52) second).
+	// 1/(60*52) = 320us,  3.2e-4 * 1.2e7(Hz) = 3840 <- use in if compare. 
 	clk_60Hz <= clk_60Hz + 1;
-	if(clk_60Hz == 100000) begin
+	if(clk_60Hz == 3840) begin
 		clk_fps <= ~clk_fps;
 		clk_60Hz <= 17'b0;
 	end
 	
 end
 
-// Generate this part every 1/60 sec.
+// Generate this part every 1/3120 sec.
 always@(posedge clk_fps) begin
 	// total time 25us 
 	
