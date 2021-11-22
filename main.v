@@ -6,9 +6,7 @@
 
 // Tri SPI low level interface.
 module TSPI(input CLK, 
-	output SOUT1, 
-	output SOUT2, 
-	output SOUT3, 
+	output reg [2:0]SOUT, 
 	output S_CLK, 
 	input SCE, 
 	input [5:0] GN,
@@ -16,39 +14,41 @@ module TSPI(input CLK,
 	// These will connect to Slave SPI module.
 	output reg [11:0] MEM_ADDR,
 	input [7:0] MEM_BYTE,
-	output reg MEM_CE // active high to read.
+	output wire MEM_CE // active high to read.
 	);
 
-// regs for control GPIO
-reg SD1, SD2, SD3;
-// assign each Serial output pins to regs 
-assign SOUT1 = SD1;
-assign SOUT2 = SD2;
-assign SOUT3 = SD3;
 
 // Keep track of current bit that shifting out.
 reg [9:0] BitCounter;
 
-// LUTs for converting the (MSB)abcdef(LSB) to (MSB)afbecd(LSB) format require by display.
-reg [1:0] ConvLUT [5:0]; 
-reg [1:0] pixLUT [5:0];
+// Count 0-6 instead of using moduo
+reg [2:0] Mod1;
+
+// LUT for converting the (MSB)abcdef(LSB) to (MSB)afbecd(LSB) format require by display.
+reg [11:0] pixLUT [5:0];
+
+// LUT for GRAM row select
+reg [11:0] RowSel [38:0];
+
+// reg store value for clock divider to tick every 6 clock cyclces.
+reg [6:0] clk_div6 = 6'b0;
+reg [2:0] clk_div6div = 3'b0;
+
+integer i;
 
 // Tri-SPI clock running the same freq as System clock.
 // But can be completely disabled by set SCE to 0.
 assign S_CLK = CLK & SCE;
+assign MEM_CE = SCE;
+
 
 initial begin
 	BitCounter <= 0;
 
-	SD1 <= 0;
-	SD2 <= 0;
-	SD3 <= 0;
-	ConvLUT[0] <= 3;//a
-	ConvLUT[1] <= 0;//f
-	ConvLUT[2] <= 0;//b
-	ConvLUT[3] <= 3;//e
-	ConvLUT[4] <= 3;//c
-	ConvLUT[5] <= 0;//d
+	Mod1 <= 0;
+	
+	for(i=0; i < 39;i = i+1)
+		RowSel[i] <= (77*i);
 	
 	pixLUT[0] <= 0;
 	pixLUT[1] <= 2;
@@ -62,79 +62,65 @@ end
 
 always@(posedge S_CLK) begin 
 
-		if(BitCounter == 288)
-			BitCounter <= 0;// reset the counter.
-		else 
-			BitCounter <= BitCounter + 1;// count bit number / clock cycle.
 
-		/* use BitCounter to calculate the memory offset to shift data out.
+	if(BitCounter == 288)
+		BitCounter <= 0;// reset the counter.
+	else 
+		BitCounter <= BitCounter + 1;// count bit number / clock cycle.
+	
+	if(Mod1 == 6)
+		Mod1 <= 0;
+	else 
+		Mod1 <= Mod1 + 1;
+		
+	clk_div6div <= clk_div6div + 1;
+	if(clk_div6div == 6)begin
+		clk_div6div <= 0;
+		clk_div6 <= clk_div6 + 1;
+	end
+		
+		//use BitCounter to calculate the memory offset to shift data out.
 		// We treat the plain linear 3003 bytes mem as 77 byte wide (column) and 39 byte tall (roll).
 		// Col0		Col1	Col2	...	Col76
 		// [Byte0]	[Byte1]	[Byte2]	... [Byte76] --- ROW0
 		// [Byte77] [Byte78] [Byte79] ... [Byte153] --- ROW1
 		//						...
 		//						...
-		// [Byte2926] [Byte2927] [Byte2928] ... [Byte3003] --- ROW38
+		// [Byte2926] [Byte2927] [Byte2928] ... [Byte3002] --- ROW38
 		
 		// 2 Grids share same 6 bit-wide data, We send 6bit pixels data for 39 times (Vertically from to to bottom in perspective of Display dot arrangement).
+	
+		// Store mem Address to this. and later read data from MEM_BYTE;
+		//MEM_ADDR <= (GN / 2) + (BitCounter / 6)*77;
 		
-		// GN / 2 -> will gives us as if Grid N or N+1 in currently displaying, Which byte column we need to read from Display "MEM_BYTE"
-		// BitCounter/6 -> serve as a "every 6 bit" counter, every time 6 bit has been send, we move to new row but still in the same column.
-		// from that be can calculate the absolute position of byte on array by multiply by column number (77).
-		// (BitCounter/6)*77 -> give us the absolute position of byte, so we can read array in verical manner.
+		//MEM_ADDR <= /*on ram afbecd pixel column locator*/pixLUT[Mod1] + /*Grid number select byte 0,1,2 3,4,5 or so on*/ 3*(GN/2) + /* row selector */ (BitCounter / 6)*77;
 		
-		// Sum everyting up we'll have
-		// (GN / 2) + (BitCounter / 6)*77
+	if(clk_div6div < 39) begin
+		MEM_ADDR <= pixLUT[Mod1]; 
+		MEM_ADDR <= MEM_ADDR + (GN*3 >> 1);
+		MEM_ADDR <= MEM_ADDR + RowSel[clk_div6];
 		
-		// In the part of bit shifting, we have to loob counting 0 1 2 3 4 5 0 1 2 3 4 5 ... becase bit shift is a masking to check whether that pixel bit is 1 or 0,
-		// so we can shift them out correctly. To calculate and the the 0-5 loop count everytime bit counter increase (with clock cycle).
-		// utilizing modulo, modulo is operation in Math that returns you "remain" of division instead of "division product"
-		// Bitcounter % 6 -> Will give us 0-5 output.We then later use that with LUT name "ConvLUT" to properly shift bit to correct position.
-		// Thus we can check individual bit on MEM_BYTE.
-		
-		// Note that I use && instead of &, that because I want the check bit not to do "and" operation.
-		// This will returns either 1 or 0. 1 means that bit on "mem" is = 1 thus pixel on and vice versa.*/
-		
-		
-		// TODO : Make the "turn grid on" work.
-		if(BitCounter < 234)// Bit 0 - 233 are pixel data
-			begin
-			// Store mem Address to this. and later read data from MEM_BYTE;
-			MEM_CE <= 1;
-			//MEM_ADDR <= (GN / 2) + (BitCounter / 6)*77;
-			MEM_ADDR <= /*on ram afbecd pixel column locator*/pixLUT[BitCounter%6] + /*Grid number select byte 0,1,2 3,4,5 or so on*/ 3*(GN/2) + /* row selector */ (BitCounter / 6)*77;
-			
-			//ConvLUT use for switching between a,c,e or b,d,f on memory byte 
-			// since the structure looks like this 00aaabbb 00cccddd 00eeefff and repeat. 
-			SD1 <= MEM_BYTE && (1 << ConvLUT[BitCounter%6]);
-			SD2 <= MEM_BYTE && (1 << ( 1 + ConvLUT[BitCounter%6]));// + 1 to shift to 2nd bit of Grayscale bit.
-			SD3 <= MEM_BYTE	&& (1 << ( 2 + ConvLUT[BitCounter%6]));// +2 to shift to 3rd bit of Grayscale bit.
-			end
-		
+		//ConvLUT use for switching between a,c,e or b,d,f on memory byte 
+		// since the structure looks like this 00aaabbb 00cccddd 00eeefff and repeat. 
+		//SOUT1 <= MEM_BYTE[Mod1];
+		//SOUT2 <= MEM_BYTE[Mod2];// + 1 to shift to 2nd bit of Grayscale bit.
+		//SOUT3 <= MEM_BYTE[Mod3];// +2 to shift to 3rd bit of Grayscale bit.
+		if(BitCounter%2)
+			SOUT[2:0] <= MEM_BYTE[2:0];
+		else
+			SOUT[2:0] <= MEM_BYTE[5:3];
+	end
+	else begin
+		clk_div6div <= 3'b0;
 		// after bit 233, bit 234 (and so on) are Grid Number bit.
 		// These 2 ifs will turn Grid N and N+1 on 
-	
-		if(BitCounter == (GN + 233)) begin// Grid N
-			SD1 <= 1;
-			SD2 <= 1;
-			SD3 <= 1;
-			end
-		else begin
-			SD1 <= 0;
-			SD2 <= 0;
-			SD3 <= 0;
-			end
+		if(BitCounter == (GN+233)) begin
+			repeat(2)// repeat this 2 clock cycle
+				SOUT[2:0] <= 3'b111;
+		end else
+			SOUT[2:0] <= 3'b000;
+	end	
 		
-		if(BitCounter == (GN + 234)) begin// Grid N+1
-			SD1 <= 1;
-			SD2 <= 1;
-			SD3 <= 1;
-			end
-		else begin
-			SD1 <= 0;
-			SD2 <= 0;
-			SD3 <= 0;
-			end
 		
 end
 
@@ -299,9 +285,7 @@ GCPCLK Gradient(
 // Tri-SPI PHY.
 TSPI SerialOut(
 	.CLK(CLK), 
-	.SOUT1(S1), 
-	.SOUT2(S2), 
-	.SOUT3(S3), 
+	.SOUT({S3,S2,S1}),
 	.S_CLK(SCK), 
 	
 	.SCE(SPI_start), 
