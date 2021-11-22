@@ -21,7 +21,7 @@ module TSPI(input CLK,
 // Keep track of current bit that shifting out.
 reg [9:0] BitCounter;
 
-// Count 0-6 instead of using moduo
+// Count 0-6 instead of using modulo
 reg [2:0] Mod1;
 
 // LUT for converting the (MSB)abcdef(LSB) to (MSB)afbecd(LSB) format require by display.
@@ -63,54 +63,48 @@ end
 always@(posedge S_CLK) begin 
 
 
-	if(BitCounter == 288)
+	if(BitCounter == 287)
 		BitCounter <= 0;// reset the counter.
 	else 
 		BitCounter <= BitCounter + 1;// count bit number / clock cycle.
 	
-	if(Mod1 == 6)
+	if(Mod1 == 5)
 		Mod1 <= 0;
 	else 
 		Mod1 <= Mod1 + 1;
 		
 	clk_div6div <= clk_div6div + 1;
-	if(clk_div6div == 6)begin
+	if(clk_div6div == 5)begin
 		clk_div6div <= 0;
 		clk_div6 <= clk_div6 + 1;
 	end
 		
-		//use BitCounter to calculate the memory offset to shift data out.
-		// We treat the plain linear 3003 bytes mem as 77 byte wide (column) and 39 byte tall (roll).
-		// Col0		Col1	Col2	...	Col76
-		// [Byte0]	[Byte1]	[Byte2]	... [Byte76] --- ROW0
-		// [Byte77] [Byte78] [Byte79] ... [Byte153] --- ROW1
-		//						...
-		//						...
-		// [Byte2926] [Byte2927] [Byte2928] ... [Byte3002] --- ROW38
-		
-		// 2 Grids share same 6 bit-wide data, We send 6bit pixels data for 39 times (Vertically from to to bottom in perspective of Display dot arrangement).
+	//use BitCounter to calculate the memory offset to shift data out.
+	// We treat the plain linear 3003 bytes mem as 77 byte wide (column) and 39 byte tall (roll).
+	// Col0		Col1	Col2	...	Col76
+	// [Byte0]	[Byte1]	[Byte2]	... [Byte76] --- ROW0
+	// [Byte77] [Byte78] [Byte79] ... [Byte153] --- ROW1
+	//						...
+	//						...
+	// [Byte2926] [Byte2927] [Byte2928] ... [Byte3002] --- ROW38
 	
-		// Store mem Address to this. and later read data from MEM_BYTE;
-		//MEM_ADDR <= (GN / 2) + (BitCounter / 6)*77;
+	// 2 Grids share same 6 bit-wide data, We send 6bit pixels data for 39 times (Vertically from to to bottom in perspective of Display dot arrangement).
+	
 		
-		//MEM_ADDR <= /*on ram afbecd pixel column locator*/pixLUT[Mod1] + /*Grid number select byte 0,1,2 3,4,5 or so on*/ 3*(GN/2) + /* row selector */ (BitCounter / 6)*77;
+	// send 6 pixels 39 times took 234 clock cycle, after 234 cycles, we'll send the Grid control data.
+	if(clk_div6div < 39) begin// Send Pixels data.
+	
+		MEM_ADDR <= pixLUT[Mod1]; // Locate the byte containing A,B,C,D,E or F pixel 
+		MEM_ADDR <= MEM_ADDR + (GN*3 >> 1);// Grid number will determine which column on GRAM will be selected.
+		MEM_ADDR <= MEM_ADDR + RowSel[clk_div6];// This will move to new row on GRAM.
 		
-	if(clk_div6div < 39) begin
-		MEM_ADDR <= pixLUT[Mod1]; 
-		MEM_ADDR <= MEM_ADDR + (GN*3 >> 1);
-		MEM_ADDR <= MEM_ADDR + RowSel[clk_div6];
-		
-		//ConvLUT use for switching between a,c,e or b,d,f on memory byte 
-		// since the structure looks like this 00aaabbb 00cccddd 00eeefff and repeat. 
-		//SOUT1 <= MEM_BYTE[Mod1];
-		//SOUT2 <= MEM_BYTE[Mod2];// + 1 to shift to 2nd bit of Grayscale bit.
-		//SOUT3 <= MEM_BYTE[Mod3];// +2 to shift to 3rd bit of Grayscale bit.
 		if(BitCounter%2)
 			SOUT[2:0] <= MEM_BYTE[2:0];
 		else
 			SOUT[2:0] <= MEM_BYTE[5:3];
+			
 	end
-	else begin
+	else begin// Send Grid Control data.
 		clk_div6div <= 3'b0;
 		// after bit 233, bit 234 (and so on) are Grid Number bit.
 		// These 2 ifs will turn Grid N and N+1 on 
@@ -144,7 +138,7 @@ end
 // counting every clock cycle.
 always @(posedge CLK & PCE) begin
 		
-	if(counter == 288)// count clock cycles.
+	if(counter == 287)// count clock cycles.
 		counter <= 0;
 	else 
 		counter <= counter + 1;// increase counter by 1, non blocking counter (free running).
@@ -330,7 +324,7 @@ always@(posedge CLK) begin
 	// actually it's 3120Hz (each frame need to update display 52 times (52 grids), we want 60fps, 1 frame last 1/(60*52) second).
 	// 1/(60*52) = 320us,  3.2e-4 * 1.2e7(Hz) = 3840 <- use in if compare. 
 	clk_60Hz <= clk_60Hz + 1;
-	if(clk_60Hz == 3840) begin
+	if(clk_60Hz == 3839) begin
 		clk_fps <= ~clk_fps;
 		clk_60Hz <= 17'b0;
 	end
@@ -352,8 +346,8 @@ always@(posedge clk_fps) begin
 	
 	//output SPI data and generate GCP at the same time.
 	
-	if(GridNum == 53)// MN15439A has 52 Grids, reset them when exceed 52.
-		GridNum <= 0;
+	if(GridNum == 52)// MN15439A has 52 Grids, reset them when exceed 52.
+		GridNum <= 1;
 	else
 		GridNum <= GridNum + 1;
 		
