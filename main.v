@@ -25,14 +25,13 @@ reg [9:0] BitCounter;
 reg [2:0] Mod1;
 
 // LUT for converting the (MSB)abcdef(LSB) to (MSB)afbecd(LSB) format require by display.
-reg [11:0] pixLUT [5:0];
+reg [1:0] pixLUT [5:0];
 
 // LUT for GRAM row select
 reg [11:0] RowSel [38:0];
 
-// reg store value for clock divider to tick every 6 clock cyclces.
-reg [6:0] clk_div6 = 6'b0;
-reg [2:0] clk_div6div = 3'b0;
+// reg store value to count to 39 (completed 1 column).
+reg [6:0] clk_cnt39 = 0;
 
 integer i;
 
@@ -60,24 +59,28 @@ initial begin
 end
 
 
+always@(negedge SCE) begin
+	// reset value when data transmitted.
+	Mod1 <= 0;
+	BitCounter <= 0;
+end
+
 always@(posedge S_CLK) begin 
 
-
-	if(BitCounter == 287)
+	if(BitCounter == 287) begin
 		BitCounter <= 0;// reset the counter.
+		clk_cnt39 <= 0;// reset the "send the pixels data 6bit 39 times" counter. 
+		end
 	else 
 		BitCounter <= BitCounter + 1;// count bit number / clock cycle.
 	
 	if(Mod1 == 5)
 		Mod1 <= 0;
-	else 
+	else begin
 		Mod1 <= Mod1 + 1;
-		
-	clk_div6div <= clk_div6div + 1;
-	if(clk_div6div == 5)begin
-		clk_div6div <= 0;
-		clk_div6 <= clk_div6 + 1;
+		clk_cnt39 <= clk_cnt39 + 1;
 	end
+
 		
 	//use BitCounter to calculate the memory offset to shift data out.
 	// We treat the plain linear 3003 bytes mem as 77 byte wide (column) and 39 byte tall (roll).
@@ -92,11 +95,11 @@ always@(posedge S_CLK) begin
 	
 		
 	// send 6 pixels 39 times took 234 clock cycle, after 234 cycles, we'll send the Grid control data.
-	if(clk_div6div < 39) begin// Send Pixels data.
+	if(clk_cnt39 < 39) begin// Send Pixels data.
 	
 		MEM_ADDR <= pixLUT[Mod1]; // Locate the byte containing A,B,C,D,E or F pixel 
 		MEM_ADDR <= MEM_ADDR + (GN*3 >> 1);// Grid number will determine which column on GRAM will be selected.
-		MEM_ADDR <= MEM_ADDR + RowSel[clk_div6];// This will move to new row on GRAM.
+		MEM_ADDR <= MEM_ADDR + RowSel[clk_cnt39];// This will move to new row on GRAM.
 		
 		if(BitCounter%2)
 			SOUT[2:0] <= MEM_BYTE[2:0];
@@ -105,7 +108,6 @@ always@(posedge S_CLK) begin
 			
 	end
 	else begin// Send Grid Control data.
-		clk_div6div <= 3'b0;
 		// after bit 233, bit 234 (and so on) are Grid Number bit.
 		// These 2 ifs will turn Grid N and N+1 on 
 		if(BitCounter == (GN+233)) begin
@@ -115,7 +117,7 @@ always@(posedge S_CLK) begin
 			SOUT[2:0] <= 3'b000;
 	end	
 		
-		
+
 end
 
 endmodule //TSPI
