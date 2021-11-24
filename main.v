@@ -1,17 +1,17 @@
-/* VFDHackICE */
-// TSPI - Tri SPI. Specially designed for MN15439A, Vacuum Fluorescent Display Dot Matrix Graphic Display.
-// Capable of producing 8 levels grayscale (including Dot turned of).
+// VFDHackICE project. MN15439A Noritake Itron VFD display controller + Buffer.
+// Implemented Tri-SPI PHY. A Tripple Serial data output, 3 bit splitted to each data line. to control 8 levels Grayscale.
+// Plus Variable frequency to generate GCP signal, Which is PWM of each brightness level combined in single signal. 
 // Running on Lattice iCE40LP1K little tiny FPGA using iCESugar nano board.
 // Coded by TinLethax 2021/11/15 +7
 
 // Tri SPI low level interface.
 module TSPI(input CLK, 
-	output reg [2:0]SOUT, 
-	output S_CLK, 
-	input SCE, 
-	input [5:0] GN,
+	output reg [2:0]SOUT, //3 Serial data output
+	output S_CLK,// SPI Clock
+	input SCE, // Module "Chip Enable"
+	input [5:0] GN,// Grid number from Display scan "always" in "main" module.
 	
-	// These will connect to Slave SPI module.
+	// These is GRAM stuffs, Send Address to GRAM, read from it and send to Display.
 	output reg [11:0] MEM_ADDR,
 	input [7:0] MEM_BYTE,
 	output wire MEM_CE // active high to read.
@@ -22,7 +22,7 @@ module TSPI(input CLK,
 reg [9:0] BitCounter;
 
 // Count 0-6 instead of using modulo
-reg [2:0] Mod1;
+reg [2:0] Mod6;
 
 // LUT for converting the (MSB)abcdef(LSB) to (MSB)afbecd(LSB) format require by display.
 reg [1:0] pixLUT [5:0];
@@ -33,6 +33,7 @@ reg [11:0] RowSel [38:0];
 // reg store value to count to 39 (completed 1 column).
 reg [6:0] clk_cnt39 = 0;
 
+// use in for loop.
 integer i;
 
 // Tri-SPI clock running the same freq as System clock.
@@ -44,29 +45,30 @@ assign MEM_CE = SCE;
 initial begin
 	BitCounter <= 0;
 
-	Mod1 <= 0;
+	Mod6 <= 0;
 	
 	for(i=0; i < 39;i = i+1)
 		RowSel[i] <= (77*i);
 	
-	pixLUT[0] <= 0;
-	pixLUT[1] <= 2;
-	pixLUT[2] <= 0;
-	pixLUT[3] <= 2;
-	pixLUT[4] <= 1;
-	pixLUT[5] <= 1;
+	pixLUT[0] <= 0;// A
+	pixLUT[1] <= 2;// F
+	pixLUT[2] <= 0;// B
+	pixLUT[3] <= 2;// E
+	pixLUT[4] <= 1;// C
+	pixLUT[5] <= 1;// D
 	
 end
 
 
 always@(negedge SCE) begin
 	// reset value when data transmitted.
-	Mod1 <= 0;
+	Mod6 <= 0;
 	BitCounter <= 0;
 end
 
 always@(posedge S_CLK) begin 
 
+	// Keep track of clock cycle, we send 288bit worth of data.
 	if(BitCounter == 287) begin
 		BitCounter <= 0;// reset the counter.
 		clk_cnt39 <= 0;// reset the "send the pixels data 6bit 39 times" counter. 
@@ -74,16 +76,17 @@ always@(posedge S_CLK) begin
 	else 
 		BitCounter <= BitCounter + 1;// count bit number / clock cycle.
 	
-	if(Mod1 == 5)
-		Mod1 <= 0;
+	// Mod 6 counter, 0 1 2 3 4 5 then back to 0 
+	if(Mod6 == 5)
+		Mod6 <= 0;
 	else begin
-		Mod1 <= Mod1 + 1;
-		clk_cnt39 <= clk_cnt39 + 1;
+		Mod6 <= Mod6 + 1;
+		clk_cnt39 <= clk_cnt39 + 1;// keep track of how many times 6bit pixels have been sent.
 	end
 
 		
-	//use BitCounter to calculate the memory offset to shift data out.
-	// We treat the plain linear 3003 bytes mem as 77 byte wide (column) and 39 byte tall (roll).
+	//use LUTs and grid number to calculate the memory offset to read from.
+	// We treat the plain linear 3003 bytes mem as 77 byte wide (column) and 39 row tall.
 	// Col0		Col1	Col2	...	Col76
 	// [Byte0]	[Byte1]	[Byte2]	... [Byte76] --- ROW0
 	// [Byte77] [Byte78] [Byte79] ... [Byte153] --- ROW1
@@ -91,14 +94,28 @@ always@(posedge S_CLK) begin
 	//						...
 	// [Byte2926] [Byte2927] [Byte2928] ... [Byte3002] --- ROW38
 	
-	// 2 Grids share same 6 bit-wide data, We send 6bit pixels data for 39 times (Vertically from to to bottom in perspective of Display dot arrangement).
+	// 2 Grids share same 6 bit-wide data, We send 6bit pixels data for 39 times (Vertically from top to bottom in perspective of Display dot arrangement).
 	
-		
+	// pixLUT[] is look up table to locate which pixel is where on the Memory. Memory format looks like this.
+	//  [Byte 0]  [Byte 1]  [Byte 2]
+	// [00AAABBB][00CCCDDD][00EEEFFF]
+	// normally Display only accept this weird AFBECD pixels order. assign each pixels to number and we'll get.
+	// A=0, F=1, B=2, E=3, C=4, D=5. Putting these number into [] of pixLut will return the Byte number, indicates where to look for "that" pixel 3bit data.
+	
+	// (GN-1)*3 >> 1 (or (GN-1)*3/2) use for moving column 3 byte each step.
+	// grid 1 and 2, grid 3 and 4, 5 and 6 and so on, shares same 3 byte column, because 1 column contain 2 pixels data. each time display update, we send 3 column to display.
+	// This will calculate where the column of byte contain pixels when It's Grid number X.
+	
+	// RowSel[] is array store the multiple of 77, since we treat (Graphic) Memory as 77 byte wide and 39 row tall. 
+	// new row of byte start at 77*n where n is row number starting from 0.
+	// that array doesn't require clock cycles to multiply, instead just grab number from LUT which is synthesized by Yosys.
+	// Note that for loop will be optimized, value RowSel[0] to RowSel[38] will be pre-calculated by synthesizer. 
+	
 	// send 6 pixels 39 times took 234 clock cycle, after 234 cycles, we'll send the Grid control data.
 	if(clk_cnt39 < 39) begin// Send Pixels data.
 	
-		MEM_ADDR <= pixLUT[Mod1]; // Locate the byte containing A,B,C,D,E or F pixel 
-		MEM_ADDR <= MEM_ADDR + (GN*3 >> 1);// Grid number will determine which column on GRAM will be selected.
+		MEM_ADDR <= pixLUT[Mod6]; // Locate the byte containing A,B,C,D,E or F pixel 
+		MEM_ADDR <= MEM_ADDR + ((GN-1)*3 >> 1);// Grid number will determine which column on GRAM will be selected.
 		MEM_ADDR <= MEM_ADDR + RowSel[clk_cnt39];// This will move to new row on GRAM.
 		
 		if(BitCounter%2)
@@ -109,11 +126,10 @@ always@(posedge S_CLK) begin
 	end
 	else begin// Send Grid Control data.
 		// after bit 233, bit 234 (and so on) are Grid Number bit.
-		// These 2 ifs will turn Grid N and N+1 on 
-		if(BitCounter == (GN+233)) begin
-			repeat(2)// repeat this 2 clock cycle
-				SOUT[2:0] <= 3'b111;
-		end else
+		// These if will turn Grid N and N+1 on 
+		if( (BitCounter == (GN+233)) || (BitCounter == (GN+234)) ) 
+			SOUT[2:0] <= 3'b111;
+		else
 			SOUT[2:0] <= 3'b000;
 	end	
 		
