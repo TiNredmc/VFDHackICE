@@ -189,12 +189,17 @@ always @(posedge CLK & PCE) begin
 		192,// 3rd pulse after 192 clock cycles.
 		216,// 4th pulse after 216 clock cycles.
 		240,// 5th pulse after 240 clock cycles.
-		256: begin// 6th pulse after 256 clock cycles.
-			GCP = 1;
-			#1
-			GCP = 0;
-		end
-		default: GCP = 0;
+		256:// 6th pulse after 256 clock cycles.
+			GCP <= 1;
+		//3 clock cycles later (250ns), put GCP pin down.
+		75,
+		147,
+		195,
+		219,
+		243,
+		259:
+			GCP <= 0;
+		default: GCP <= GCP;// retain same state
 	endcase
 	
 end //always@
@@ -368,20 +373,25 @@ always@(posedge CLK) begin
 		clk_60Hz <= 17'b0;
 	end
 	
+	// Start Tranmission by Display blanking
+	if(clk_60Hz == 3719) begin// Blank and LAT rise at the same time
+		BLK_CTRL <= 1;
+		LAT_CTRL <= 1;
+		end
+	
+	// Latch goes 0 after 3 clock cycles or 250ns at 12MHz
+	if(clk_60Hz == 3722)
+		LAT_CTRL <= 0;
+		
+	// Blank goes 0 after 120 clock cycles or 10us at 12MHz.
+	if(clk_60Hz == 3836)// Bring BLK to logic 0, 3 clock cycles away (250ns at 12MHz) from when the transmission start.
+		BLK_CTRL <= 0;
+	
 end
 
 // Generate this part every 1/3120 sec.
 always@(posedge clk_fps) begin
 	// total time 25us 
-	
-	// Start Tranmission by Display blanking
-	BLK_CTRL = 1'b1;
-	#1
-	LAT_CTRL = 1'b1;
-	#5		//400ns delay (at 12MHz clock)
-	LAT_CTRL = 1'b0;
-	#1
-	BLK_CTRL = 1'b0;
 	
 	//output SPI data and generate GCP at the same time.
 	
@@ -391,9 +401,9 @@ always@(posedge clk_fps) begin
 		GridNum <= GridNum + 1;
 		
 	if(SCS)
-		SPI_start = 1;
+		SPI_start <= 1;
 	else
-		SPI_start = 0;
+		SPI_start <= 0;
 end
 
 
