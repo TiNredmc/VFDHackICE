@@ -21,14 +21,17 @@ module TSPI(input CLK,
 // Keep track of current bit that shifting out.
 reg [9:0] BitCounter;
 
-// Count 0-6 instead of using modulo
+// Count 0-5 instead of using modulo.
 reg [2:0] Mod6;
 
 // LUT for converting the (MSB)abcdef(LSB) to (MSB)afbecd(LSB) format require by display.
 reg [1:0] pixLUT [5:0];
 
-// LUT for GRAM row select
+// LUT for GRAM row select.
 reg [11:0] RowSel [38:0];
+
+// LUT for blocking certain pixel group, When Grid with Odd number will only turns A B and C column on, Grid with Even number is vise versa.
+reg [2:0] pixBlock [1:0][5:0];
 
 // reg store value to count to 39 (completed 1 column).
 reg [6:0] clk_cnt39 = 0;
@@ -57,7 +60,25 @@ initial begin
 	pixLUT[4] <= 1;// C
 	pixLUT[5] <= 1;// D
 	
+	// some pixel columns need to be turned of depend on Odd or Even grid number currently selected.
+	//pixBlock[GN%2][Mod6]
+	// GN%2 = 0, Grid is even number, turn on only DEF
+	pixBlock[0][0] <= 3'b000;// A off
+	pixBlock[0][1] <= 3'b000;// B off
+	pixBlock[0][2] <= 3'b000;// C off
+	pixBlock[0][3] <= 3'b111;// D on
+	pixBlock[0][4] <= 3'b111;// E on
+	pixBlock[0][5] <= 3'b111;// F on
+	// GN%2 = 1, Grid is odd number, turn on only ABC
+	pixBlock[1][0] <= 3'b111;// A on
+	pixBlock[1][1] <= 3'b111;// B on
+	pixBlock[1][2] <= 3'b111;// C on
+	pixBlock[1][3] <= 3'b000;// D off
+	pixBlock[1][4] <= 3'b000;// E off
+	pixBlock[1][5] <= 3'b000;// F off
+	
 end
+
 
 
 always@(negedge SCE) begin
@@ -119,9 +140,9 @@ always@(posedge S_CLK) begin
 		MEM_ADDR <= MEM_ADDR + RowSel[clk_cnt39];// This will move to new row on GRAM.
 		
 		if(BitCounter%2)
-			SOUT[2:0] <= MEM_BYTE[2:0];
+			SOUT[2:0] <= MEM_BYTE[2:0] & pixBlock[GN%2][Mod6];
 		else
-			SOUT[2:0] <= MEM_BYTE[5:3];
+			SOUT[2:0] <= MEM_BYTE[5:3] & pixBlock[GN%2][Mod6];
 			
 	end
 	else begin// Send Grid Control data.
