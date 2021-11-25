@@ -289,9 +289,9 @@ module top(input CLK,
 	input SSCK, // Slave SPI clock input (Host to FPGA)
 	input SCS); // Chip select (Active Low, controlled by Host).
 
-// Clock divider to get 60MHz
-reg clk_fps = 0;// pesudo clock for display refreshing, aiming for 0 fps (60Hz).
-reg [17:0] clk_60Hz = 17'b0;
+// Clock divider to get 60FPS at scan rate of 52 times per frame = 3120Hz
+reg clk_fps = 0;// pesudo clock for display refreshing, aiming for 60 fps (3120Hz).
+reg [17:0] clk_3120Hz = 17'b0;
 
 // these set to 1 after pulsed BLK and LAT pin.
 reg SPI_start = 0;
@@ -366,25 +366,25 @@ always@(posedge CLK) begin
 	
 	// Generate 60Hz clock for display refreshing. Generated from 12MHz input clock
 	// actually it's 3120Hz (each frame need to update display 52 times (52 grids), we want 60fps, 1 frame last 1/(60*52) second).
-	// 1/(60*52) = 320us,  3.2e-4 * 1.2e7(Hz) = 3840 <- use in if compare. 
-	clk_60Hz <= clk_60Hz + 1;
-	if(clk_60Hz == 3839) begin
+	// 1/(60*52) = 320us,  3.2e-4 * 1.2e7(Hz) = 3846 <- use in if compare. 
+	clk_3120Hz <= clk_3120Hz + 1;
+	if(clk_3120Hz == 3845) begin
 		clk_fps <= ~clk_fps;
-		clk_60Hz <= 17'b0;
+		clk_3120Hz <= 17'b0;
 	end
 	
 	// Start Tranmission by Display blanking
-	if(clk_60Hz == 3719) begin// Blank and LAT rise at the same time
+	if(clk_3120Hz == 3725) begin// Blank and LAT rise at the same time
 		BLK_CTRL <= 1;
 		LAT_CTRL <= 1;
 		end
 	
 	// Latch goes 0 after 3 clock cycles or 250ns at 12MHz
-	if(clk_60Hz == 3722)
+	if(clk_3120Hz == 3728)
 		LAT_CTRL <= 0;
 		
 	// Blank goes 0 after 120 clock cycles or 10us at 12MHz.
-	if(clk_60Hz == 3836)// Bring BLK to logic 0, 3 clock cycles away (250ns at 12MHz) from when the transmission start.
+	if(clk_3120Hz == 3842)// Bring BLK to logic 0, 3 clock cycles away (250ns at 12MHz) from when the transmission start.
 		BLK_CTRL <= 0;
 	
 end
