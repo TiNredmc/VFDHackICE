@@ -4,6 +4,10 @@
 // Running on Lattice iCE40LP1K little tiny FPGA using iCESugar nano board.
 // Coded by TinLethax 2021/11/15 +7
 
+// =================================
+// ==========VFD Control============
+// =================================
+
 // Tri SPI low level interface.
 module TSPI(input CLK, 
 	output reg [2:0]SOUT, //3 Serial data output
@@ -33,17 +37,20 @@ reg [11:0] RowSel [38:0];
 // LUT for blocking certain pixel group, When Grid with Odd number will only turns A B and C column on, Grid with Even number is vise versa.
 reg [2:0] pixBlock [1:0][5:0];
 
+// LUT to replace multiplication with 3 of Grid number, use for move byte column offset that read from GRAM.
+reg [7:0] ColSel [51:0];
+
+
 // reg store value to count to 39 (completed 1 column).
 reg [6:0] clk_cnt39 = 0;
 
 // use in for loop.
-integer i;
+integer i,j;
 
 // Tri-SPI clock running the same freq as System clock.
 // But can be completely disabled by set SCE to 0.
 assign S_CLK = CLK & SCE;
 assign MEM_CE = SCE;
-
 
 initial begin
 	BitCounter <= 0;
@@ -52,6 +59,9 @@ initial begin
 	
 	for(i=0; i < 39;i = i+1)
 		RowSel[i] <= (77*i);
+		
+	for(j=0; j < 52;j = j+1)
+		ColSel[j] <= (3*j);
 	
 	pixLUT[0] <= 0;// A
 	pixLUT[1] <= 2;// F
@@ -78,8 +88,6 @@ initial begin
 	pixBlock[1][5] <= 3'b000;// F off
 	
 end
-
-
 
 always@(negedge SCE) begin
 	// reset value when data transmitted.
@@ -123,7 +131,7 @@ always@(posedge S_CLK) begin
 	// normally Display only accept this weird AFBECD pixels order. assign each pixels to number and we'll get.
 	// A=0, F=1, B=2, E=3, C=4, D=5. Putting these number into [] of pixLut will return the Byte number, indicates where to look for "that" pixel 3bit data.
 	
-	// (GN-1)*3 >> 1 (or (GN-1)*3/2) use for moving column 3 byte each step.
+	// ColSel[GN-1] >> 1 use for moving column 3 byte each step.
 	// grid 1 and 2, grid 3 and 4, 5 and 6 and so on, shares same 3 byte column, because 1 column contain 2 pixels data. each time display update, we send 3 column to display.
 	// This will calculate where the column of byte contain pixels when It's Grid number X.
 	
@@ -136,7 +144,7 @@ always@(posedge S_CLK) begin
 	if(clk_cnt39 < 39) begin// Send Pixels data.
 	
 		MEM_ADDR <= pixLUT[Mod6]; // Locate the byte containing A,B,C,D,E or F pixel 
-		MEM_ADDR <= MEM_ADDR + ((GN-1)*3 >> 1);// Grid number will determine which column on GRAM will be selected.
+		MEM_ADDR <= MEM_ADDR + (ColSel[GN-1] >> 1);// Grid number will determine which column on GRAM will be selected.
 		MEM_ADDR <= MEM_ADDR + RowSel[clk_cnt39];// This will move to new row on GRAM.
 		
 		if(BitCounter%2)
@@ -206,6 +214,10 @@ end //always@
 
 endmodule// GCPCLK
 
+// =================================
+// ======= Slave SPI PHY ===========
+// =================================
+
 // Slave SPI module, Host -> FPGA
 module SSPI (
 	input MOSI,
@@ -220,6 +232,12 @@ module SSPI (
 reg [7:0] SPIbuffer;
 reg [11:0] byteBufCnt;// 12 bit counter for 3003 bytes data + 1 CMD bytes.
 reg [2:0] bitBufCnt;// 3-bit counter from 0-7
+
+initial begin
+	SPIbuffer <= 0;
+	byteBufCnt <= 0;
+	bitBufCnt <= 0;
+end
 
 always@(posedge SCLK & ~SCE) begin
 
@@ -240,12 +258,17 @@ end// always@
 
 // Host release SPI chip select. logic lvl goes back to HIGH
 always@(posedge SCE)begin
-	M_CE = 0;// DIsable mem write.
-	bitBufCnt = 0;// reset counter
-	byteBufCnt = 0;// reset byte counter.
+	M_CE <= 0;// Disable mem write.
+	bitBufCnt <= 0;// reset counter
+	byteBufCnt <= 0;// reset byte counter.
 end
 
-endmodule
+endmodule// SSPI
+
+
+// =================================
+// ======= Graphic MEM =============
+// =================================
 
 // Using BRAM as Graphic RAM.
 module GRAM(
@@ -261,9 +284,9 @@ module GRAM(
 	input G_CE_W,
 	input G_CE_R);
 	
-reg [7:0] mem [3003:0];
+reg [7:0] mem [3002:0];
 
-initial mem[0] <= 255;
+initial mem[0] <= 255;// fill the first byte to let Yosys infer to BRAM.
 
 always@(posedge CLK) begin// reading from RAM sync with system clock 
 	if(G_CE_R)
@@ -275,7 +298,7 @@ always@(posedge W_CLK) begin// writing to RAM sync with Slave SPI clock.
 		mem[GRAM_ADDR_W] <= GRAM_IN;
 end
 	
-endmodule 
+endmodule// GRAM
 
 module top(input CLK, 
 	output wire S1, // Serial data 1 (VFD)
