@@ -181,11 +181,18 @@ initial begin
 	counter <= 0;
 end
 
+/*
+always@(negedge PCE) begin
+	counter <= 0;
+	GCP <= 0;
+end*/
 
 // counting every clock cycle.
-always @(posedge CLK & PCE) begin
-		
-	if(counter == 287)// count clock cycles.
+always @(posedge CLK) begin
+	
+if(PCE) begin 
+
+	if(counter == 288)// count clock cycles.
 		counter <= 0;
 	else 
 		counter <= counter + 1;// increase counter by 1, non blocking counter (free running).
@@ -209,6 +216,11 @@ always @(posedge CLK & PCE) begin
 			GCP <= 0;
 		default: GCP <= GCP;// retain same state
 	endcase
+	
+end else begin
+	GCP <= 0;
+	counter <= 0;
+end
 	
 end //always@
 
@@ -391,25 +403,38 @@ always@(posedge CLK) begin
 	// actually it's 3120Hz (each frame need to update display 52 times (52 grids), we want 60fps, 1 frame last 1/(60*52) second).
 	// 1/(60*52) = 320us,  3.2e-4 * 1.2e7(Hz) = 3846 <- use in if compare. 
 	clk_3120Hz <= clk_3120Hz + 1;
-	if(clk_3120Hz == 3845) begin
-		clk_fps <= ~clk_fps;
+	if(clk_3120Hz == 3845) 
 		clk_3120Hz <= 17'b0;
-	end
 	
-	// Start Tranmission by Display blanking
-	if(clk_3120Hz == 3725) begin// Blank and LAT rise at the same time
-		BLK_CTRL <= 1;
-		LAT_CTRL <= 1;
-		end
+	clk_fps <= (clk_3120Hz < 1923) ? 1 : 0;
 	
-	// Latch goes 0 after 3 clock cycles or 250ns at 12MHz
-	if(clk_3120Hz == 3728)
-		LAT_CTRL <= 0;
+	if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
+		// Tri-SPI and GCP won't start after LAT is pulsed
+		if(clk_3120Hz == 285)
+			SPI_start <= 0;
+	
+		// Start Tranmission by Display blanking
+		if(clk_3120Hz == 3725) begin// Blank and LAT rise at the same time
+			BLK_CTRL <= 1;
+			LAT_CTRL <= 1;
+			end
 		
-	// Blank goes 0 after 120 clock cycles or 10us at 12MHz.
-	if(clk_3120Hz == 3842)// Bring BLK to logic 0, 3 clock cycles away (250ns at 12MHz) from when the transmission start.
+		// Latch goes 0 after 3 clock cycles or 250ns at 12MHz
+		if(clk_3120Hz == 3728)
+			LAT_CTRL <= 0;
+			
+		// Blank goes 0 after 120 clock cycles or 10us at 12MHz.
+		if(clk_3120Hz == 3842) begin// Bring BLK to logic 0, 3 clock cycles away (250ns at 12MHz) from when the transmission start.
+			BLK_CTRL <= 0;
+			SPI_start <= 1;
+		end
+		
+	end 
+	else begin
 		BLK_CTRL <= 0;
-	
+		LAT_CTRL <= 0;
+		SPI_start <= 0;
+	end
 end
 
 // Generate this part every 1/3120 sec.
@@ -418,15 +443,15 @@ always@(posedge clk_fps) begin
 	
 	//output SPI data and generate GCP at the same time.
 	
-	if(GridNum == 52)// MN15439A has 52 Grids, reset them when exceed 52.
+	if(GridNum == 53)// MN15439A has 52 Grids, reset them when exceed 53.
 		GridNum <= 1;
 	else
 		GridNum <= GridNum + 1;
 		
-	if(SCS)
+	/*if(SCS)
 		SPI_start <= 1;
 	else
-		SPI_start <= 0;
+		SPI_start <= 0;*/
 end
 
 
