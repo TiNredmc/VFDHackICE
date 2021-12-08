@@ -11,7 +11,7 @@
 // Tri SPI low level interface.
 module TSPI(input CLK, 
 	output reg [2:0]SOUT, //3 Serial data output
-	output S_CLK,// SPI Clock
+	output wire S_CLK,// SPI Clock
 	input SCE, // Module "Chip Enable"
 	input [5:0] GN,// Grid number from Display scan "always" in "main" module.
 	
@@ -89,14 +89,10 @@ initial begin
 	
 end
 
-always@(negedge SCE) begin
-	// reset value when data transmitted.
-	Mod6 <= 0;
-	BitCounter <= 0;
-end
 
 always@(posedge S_CLK) begin 
 
+if(SCE) begin 
 	// Keep track of clock cycle, we send 288bit worth of data.
 	if(BitCounter == 287) begin
 		BitCounter <= 0;// reset the counter.
@@ -161,8 +157,15 @@ always@(posedge S_CLK) begin
 		else
 			SOUT[2:0] <= 3'b000;
 	end	
-		
-
+	
+end 
+else begin
+	// reset value when data transmitted.
+	Mod6 <= 0;
+	BitCounter <= 0;
+	clk_cnt39 <= 0;
+end
+	
 end
 
 endmodule //TSPI
@@ -180,12 +183,6 @@ integer counter; // keep track of SPI clock to generate proper GCP signal, count
 initial begin 
 	counter <= 0;
 end
-
-/*
-always@(negedge PCE) begin
-	counter <= 0;
-	GCP <= 0;
-end*/
 
 // counting every clock cycle.
 always @(posedge CLK) begin
@@ -234,7 +231,7 @@ endmodule// GCPCLK
 module SSPI (
 	input MOSI,
 	input SCLK,
-	input SCE,
+	input CE,
 	
 	output reg [11:0]M_ADDR,
 	output reg [7:0]M_BYTE,
@@ -251,7 +248,7 @@ initial begin
 	bitBufCnt <= 0;
 end
 
-always@(posedge SCLK & ~SCE) begin
+always@(posedge SCLK & ~CE) begin
 
 		if(!bitBufCnt) begin// every 8 clock cycle.
 			bitBufCnt <= 0;// reset bit counter 
@@ -269,7 +266,7 @@ always@(posedge SCLK & ~SCE) begin
 end// always@
 
 // Host release SPI chip select. logic lvl goes back to HIGH
-always@(posedge SCE)begin
+always@(posedge CE)begin
 	M_CE <= 0;// Disable mem write.
 	bitBufCnt <= 0;// reset counter
 	byteBufCnt <= 0;// reset byte counter.
@@ -373,7 +370,7 @@ TSPI SerialOut(
 SSPI SerialIN(
 	.MOSI(SSI), 
 	.SCLK(SSCK), 
-	.SCE(SCS),
+	.CE(SCS),
 	
 	.M_ADDR(GRAM_ADDR_W_SPI),
 	.M_BYTE(GRAM_SPI_READ),
