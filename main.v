@@ -13,6 +13,7 @@ module TSPI(input CLK,
 	output reg [2:0]SOUT, //3 Serial data output
 	output wire S_CLK,// SPI Clock
 	input SCE, // Module "Chip Enable"
+	input CCE, // Clock Gating
 	input [5:0] GN,// Grid number from Display scan "always" in "main" module.
 	
 	// These is GRAM stuffs, Send Address to GRAM, read from it and send to Display.
@@ -40,28 +41,34 @@ reg [2:0] pixBlock [1:0][5:0];
 // LUT to replace multiplication with 3 of Grid number, use for move byte column offset that read from GRAM.
 reg [7:0] ColSel [51:0];
 
+// LUT use to check when to turn bit on for certain grid number
+reg [8:0] GridLUT [51:0];
 
 // reg store value to count to 39 (completed 1 column).
 reg [6:0] clk_cnt39 = 0;
 
 // use in for loop.
-integer i,j;
+integer i,j,k;
 
 // Tri-SPI clock running the same freq as System clock.
-// But can be completely disabled by set SCE to 0.
-assign S_CLK = CLK & SCE;
+// But can be completely gatef by set SCE to 0.
+assign S_CLK = CLK & CCE;
 assign MEM_CE = SCE;
 
 initial begin
 	BitCounter <= 0;
-
+	SOUT[2:0] <= 3'b0;
 	Mod6 <= 0;
 	
+	// LUT Const stuffs 
 	for(i=0; i < 39;i = i+1)
 		RowSel[i] <= (77*i);
 		
 	for(j=0; j < 52;j = j+1)
-		ColSel[j] <= (3*j);
+		ColSel[j] <= (3*j) >> 1;
+	
+	for(k=1; k < 53;k = k+1)
+		GridLUT[k-1] <= k + 233;
 	
 	pixLUT[0] <= 0;// A
 	pixLUT[1] <= 2;// F
@@ -89,27 +96,20 @@ initial begin
 	
 end
 
-
-always@(posedge S_CLK) begin 
+always@(posedge CLK) begin 
 
 if(SCE) begin 
 	// Keep track of clock cycle, we send 288bit worth of data.
-	if(BitCounter == 287) begin
-		BitCounter <= 0;// reset the counter.
-		clk_cnt39 <= 0;// reset the "send the pixels data 6bit 39 times" counter. 
-		end
-	else 
-		BitCounter <= BitCounter + 1;// count bit number / clock cycle.
+	BitCounter <= BitCounter + 1;// count bit number / clock cycle.
 	
 	// Mod 6 counter, 0 1 2 3 4 5 then back to 0 
-	if(Mod6 == 5)
-		Mod6 <= 0;
-	else begin
-		Mod6 <= Mod6 + 1;
+	if(Mod6 == 5) begin 
+		Mod6 <= 0;// reset the mod counter.
 		clk_cnt39 <= clk_cnt39 + 1;// keep track of how many times 6bit pixels have been sent.
-	end
-
-		
+	end 
+	else
+		Mod6 <= Mod6 + 1;
+				
 	//use LUTs and grid number to calculate the memory offset to read from.
 	// We treat the plain linear 3003 bytes mem as 77 byte wide (column) and 39 row tall.
 	// Col0		Col1	Col2	...	Col76
@@ -137,10 +137,10 @@ if(SCE) begin
 	// Note that for loop will be optimized, value RowSel[0] to RowSel[38] will be pre-calculated by synthesizer. 
 	
 	// send 6 pixels 39 times took 234 clock cycle, after 234 cycles, we'll send the Grid control data.
-	if(clk_cnt39 < 39) begin// Send Pixels data.
+	if(BitCounter < 234) begin// Send Pixels data.
 	
 		MEM_ADDR <= pixLUT[Mod6]; // Locate the byte containing A,B,C,D,E or F pixel 
-		MEM_ADDR <= MEM_ADDR + (ColSel[GN-1] >> 1);// Grid number will determine which column on GRAM will be selected.
+		MEM_ADDR <= MEM_ADDR + ColSel[GN-1];// Grid number will determine which column on GRAM will be selected.
 		MEM_ADDR <= MEM_ADDR + RowSel[clk_cnt39];// This will move to new row on GRAM.
 		
 		if(BitCounter%2)
@@ -152,10 +152,63 @@ if(SCE) begin
 	else begin// Send Grid Control data.
 		// after bit 233, bit 234 (and so on) are Grid Number bit.
 		// These if will turn Grid N and N+1 on 
-		if( (BitCounter == (GN+233)) || (BitCounter == (GN+234)) ) 
-			SOUT[2:0] <= 3'b111;
-		else
-			SOUT[2:0] <= 3'b000;
+		// I know it's reallly messy (I literally manually type it all and cpoy and  paste xD.).
+		case(GN) 
+			1: SOUT[2:0] <= ((BitCounter == 234) || (BitCounter == 235)) ? 3'b111 : 3'b000;
+			2: SOUT[2:0] <= ((BitCounter == 235) || (BitCounter == 236)) ? 3'b111 : 3'b000;
+			3: SOUT[2:0] <= ((BitCounter == 236) || (BitCounter == 237)) ? 3'b111 : 3'b000;
+			4: SOUT[2:0] <= ((BitCounter == 237) || (BitCounter == 238)) ? 3'b111 : 3'b000;
+			5: SOUT[2:0] <= ((BitCounter == 238) || (BitCounter == 239)) ? 3'b111 : 3'b000;
+			6: SOUT[2:0] <= ((BitCounter == 239) || (BitCounter == 240)) ? 3'b111 : 3'b000;
+			7: SOUT[2:0] <= ((BitCounter == 240) || (BitCounter == 241)) ? 3'b111 : 3'b000;
+			8: SOUT[2:0] <= ((BitCounter == 241) || (BitCounter == 242)) ? 3'b111 : 3'b000;
+			9: SOUT[2:0] <= ((BitCounter == 242) || (BitCounter == 243)) ? 3'b111 : 3'b000;
+			10: SOUT[2:0] <= ((BitCounter == 243) || (BitCounter == 244)) ? 3'b111 : 3'b000;
+			11: SOUT[2:0] <= ((BitCounter == 244) || (BitCounter == 245)) ? 3'b111 : 3'b000;
+			12: SOUT[2:0] <= ((BitCounter == 245) || (BitCounter == 246)) ? 3'b111 : 3'b000;
+			13: SOUT[2:0] <= ((BitCounter == 246) || (BitCounter == 247)) ? 3'b111 : 3'b000;
+			14: SOUT[2:0] <= ((BitCounter == 247) || (BitCounter == 248)) ? 3'b111 : 3'b000;
+			15: SOUT[2:0] <= ((BitCounter == 248) || (BitCounter == 249)) ? 3'b111 : 3'b000;
+			16: SOUT[2:0] <= ((BitCounter == 249) || (BitCounter == 250)) ? 3'b111 : 3'b000;
+			17: SOUT[2:0] <= ((BitCounter == 250) || (BitCounter == 251)) ? 3'b111 : 3'b000;
+			18: SOUT[2:0] <= ((BitCounter == 251) || (BitCounter == 252)) ? 3'b111 : 3'b000;
+			19: SOUT[2:0] <= ((BitCounter == 252) || (BitCounter == 253)) ? 3'b111 : 3'b000;
+			20: SOUT[2:0] <= ((BitCounter == 253) || (BitCounter == 254)) ? 3'b111 : 3'b000;
+			21: SOUT[2:0] <= ((BitCounter == 254) || (BitCounter == 255)) ? 3'b111 : 3'b000;
+			22: SOUT[2:0] <= ((BitCounter == 255) || (BitCounter == 256)) ? 3'b111 : 3'b000;
+			23: SOUT[2:0] <= ((BitCounter == 256) || (BitCounter == 257)) ? 3'b111 : 3'b000;
+			24: SOUT[2:0] <= ((BitCounter == 257) || (BitCounter == 258)) ? 3'b111 : 3'b000;
+			25: SOUT[2:0] <= ((BitCounter == 258) || (BitCounter == 259)) ? 3'b111 : 3'b000;
+			26: SOUT[2:0] <= ((BitCounter == 259) || (BitCounter == 260)) ? 3'b111 : 3'b000;
+			27: SOUT[2:0] <= ((BitCounter == 260) || (BitCounter == 261)) ? 3'b111 : 3'b000;
+			28: SOUT[2:0] <= ((BitCounter == 261) || (BitCounter == 262)) ? 3'b111 : 3'b000;
+			29: SOUT[2:0] <= ((BitCounter == 262) || (BitCounter == 263)) ? 3'b111 : 3'b000;
+			30: SOUT[2:0] <= ((BitCounter == 263) || (BitCounter == 264)) ? 3'b111 : 3'b000;
+			31: SOUT[2:0] <= ((BitCounter == 264) || (BitCounter == 265)) ? 3'b111 : 3'b000;
+			32: SOUT[2:0] <= ((BitCounter == 265) || (BitCounter == 266)) ? 3'b111 : 3'b000;
+			33: SOUT[2:0] <= ((BitCounter == 266) || (BitCounter == 267)) ? 3'b111 : 3'b000;
+			34: SOUT[2:0] <= ((BitCounter == 267) || (BitCounter == 268)) ? 3'b111 : 3'b000;
+			35: SOUT[2:0] <= ((BitCounter == 268) || (BitCounter == 269)) ? 3'b111 : 3'b000;
+			36: SOUT[2:0] <= ((BitCounter == 269) || (BitCounter == 270)) ? 3'b111 : 3'b000;
+			37: SOUT[2:0] <= ((BitCounter == 270) || (BitCounter == 271)) ? 3'b111 : 3'b000;
+			38: SOUT[2:0] <= ((BitCounter == 271) || (BitCounter == 272)) ? 3'b111 : 3'b000;
+			39: SOUT[2:0] <= ((BitCounter == 272) || (BitCounter == 273)) ? 3'b111 : 3'b000;
+			40: SOUT[2:0] <= ((BitCounter == 273) || (BitCounter == 274)) ? 3'b111 : 3'b000;
+			41: SOUT[2:0] <= ((BitCounter == 274) || (BitCounter == 275)) ? 3'b111 : 3'b000;
+			42: SOUT[2:0] <= ((BitCounter == 275) || (BitCounter == 276)) ? 3'b111 : 3'b000;
+			43: SOUT[2:0] <= ((BitCounter == 276) || (BitCounter == 277)) ? 3'b111 : 3'b000;
+			44: SOUT[2:0] <= ((BitCounter == 277) || (BitCounter == 278)) ? 3'b111 : 3'b000;
+			45: SOUT[2:0] <= ((BitCounter == 278) || (BitCounter == 279)) ? 3'b111 : 3'b000;
+			46: SOUT[2:0] <= ((BitCounter == 279) || (BitCounter == 280)) ? 3'b111 : 3'b000;
+			47: SOUT[2:0] <= ((BitCounter == 280) || (BitCounter == 281)) ? 3'b111 : 3'b000;
+			48: SOUT[2:0] <= ((BitCounter == 281) || (BitCounter == 282)) ? 3'b111 : 3'b000;
+			49: SOUT[2:0] <= ((BitCounter == 282) || (BitCounter == 283)) ? 3'b111 : 3'b000;
+			50: SOUT[2:0] <= ((BitCounter == 283) || (BitCounter == 284)) ? 3'b111 : 3'b000;
+			51: SOUT[2:0] <= ((BitCounter == 284) || (BitCounter == 285)) ? 3'b111 : 3'b000;
+			52: SOUT[2:0] <= ((BitCounter == 285) || (BitCounter == 286)) ? 3'b111 : 3'b000;
+			default:
+				SOUT[2:0] <= 3'b000;
+		endcase
 	end	
 	
 end 
@@ -164,6 +217,8 @@ else begin
 	Mod6 <= 0;
 	BitCounter <= 0;
 	clk_cnt39 <= 0;
+	
+	SOUT[2:0] <= 3'b000;
 end
 	
 end
@@ -189,7 +244,7 @@ always @(posedge CLK) begin
 	
 if(PCE) begin 
 
-	if(counter == 288)// count clock cycles.
+	if(counter == 287)// count clock cycles.
 		counter <= 0;
 	else 
 		counter <= counter + 1;// increase counter by 1, non blocking counter (free running).
@@ -250,6 +305,7 @@ end
 
 always@(posedge SCLK & ~CE) begin
 
+if(~CE) begin
 		if(!bitBufCnt) begin// every 8 clock cycle.
 			bitBufCnt <= 0;// reset bit counter 
 			byteBufCnt <= byteBufCnt + 1;// counting how many bytes have been sampled.
@@ -262,15 +318,14 @@ always@(posedge SCLK & ~CE) begin
 		M_ADDR <= byteBufCnt;// byte counter keep tracks of memory address (byte number 0 = mem[0], byte number 1 = mem[1] and so on).
 			
 		SPIbuffer[bitBufCnt] <= MOSI;// storing each bit into 8bit reg.
-	
-end// always@
-
-// Host release SPI chip select. logic lvl goes back to HIGH
-always@(posedge CE)begin
+end 
+else begin// Host release SPI chip select. CE logic lvl goes back to HIGH
 	M_CE <= 0;// Disable mem write.
 	bitBufCnt <= 0;// reset counter
 	byteBufCnt <= 0;// reset byte counter.
 end
+
+end// always@
 
 endmodule// SSPI
 
@@ -295,7 +350,12 @@ module GRAM(
 	
 reg [7:0] mem [3002:0];
 
-initial mem[0] <= 255;// fill the first byte to let Yosys infer to BRAM.
+integer fill=0;
+
+initial begin
+	for(fill = 0;fill < 3003; fill++)
+		mem[fill] <= 255;// fill the first byte to let Yosys infer to BRAM.
+end
 
 always@(posedge CLK) begin// reading from RAM sync with system clock 
 	if(G_CE_R)
@@ -309,7 +369,7 @@ end
 	
 endmodule// GRAM
 
-module top(input CLK, 
+module top(input SYS_CLK, 
 	output wire S1, // Serial data 1 (VFD)
 	output wire S2, // Serial data 2 (VFD)
 	output wire S3, // Serial data 3 (VFD)
@@ -321,6 +381,9 @@ module top(input CLK,
 	input SSCK, // Slave SPI clock input (Host to FPGA)
 	input SCS); // Chip select (Active Low, controlled by Host).
 
+reg CLK,CLOCK_GATE;
+reg [6:0]CLK_TICK_DIV = 0;
+
 // Clock divider to get 60FPS at scan rate of 52 times per frame = 3120Hz
 reg clk_fps = 0;// pesudo clock for display refreshing, aiming for 60 fps (3120Hz).
 reg [17:0] clk_3120Hz = 17'b0;
@@ -329,7 +392,7 @@ reg [17:0] clk_3120Hz = 17'b0;
 reg SPI_start = 0;
 
 // store the current VFD gate number
-reg [5:0] GridNum = 0; //store grid number from 1 to 52 (52 grids), I'll automatically start at 1 later on.
+reg [5:0] GridNum; //store grid number from 1 to 52 (52 grids), I'll automatically start at 1 later on.
 
 // BLANK and LATCH control thingy
 reg BLK_CTRL, LAT_CTRL;
@@ -359,6 +422,7 @@ TSPI SerialOut(
 	.S_CLK(SCK), 
 	
 	.SCE(SPI_start), 
+	.CCE(CLOCK_GATE),
 	.GN(GridNum),
 	
 	.MEM_ADDR(GRAM_ADDR),
@@ -392,46 +456,70 @@ GRAM GraphicRAM(
 	.G_CE_R(GRAM_CE)
 	);// parse all regs and wires for GRAM.
 	
+always@(posedge SYS_CLK)begin 
+		CLK_TICK_DIV <= CLK_TICK_DIV + 1;
+		if(CLK_TICK_DIV == 127)
+			CLK_TICK_DIV <= 0;
+		CLK <= (CLK_TICK_DIV < 64) ? 1 : 0;
+end
+
+initial begin
+	GridNum <= 1;
+
+end
 
 // Things that work at System clock 
 always@(posedge CLK) begin
-	
-	// Generate 60Hz clock for display refreshing. Generated from 12MHz input clock
-	// actually it's 3120Hz (each frame need to update display 52 times (52 grids), we want 60fps, 1 frame last 1/(60*52) second).
-	// 1/(60*52) = 320us,  3.2e-4 * 1.2e7(Hz) = 3846 <- use in if compare. 
-	clk_3120Hz <= clk_3120Hz + 1;
-	if(clk_3120Hz == 3845) 
-		clk_3120Hz <= 17'b0;
-	
-	clk_fps <= (clk_3120Hz < 1923) ? 1 : 0;
-	
-	if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
-		// Tri-SPI and GCP won't start after LAT is pulsed
-		if(clk_3120Hz == 285)
-			SPI_start <= 0;
+
+if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.	
+		// Generate 60Hz clock for display refreshing. Generated from 12MHz input clock
+		// actually it's 3120Hz (each frame need to update display 52 times (52 grids), we want 60fps, 1 frame last 1/(60*52) second).
+		// 1/(60*52) = 320us,  3.2e-4 * 1.2e7(Hz) = 3846 <- use in if compare. 
+		clk_3120Hz <= clk_3120Hz + 1;
+		if(clk_3120Hz == 413) begin
+			clk_3120Hz <= 17'b0;
+			if(GridNum == 52)// MN15439A has 52 Grids, reset them when exceed 53.
+				GridNum <= 1;
+			else
+				GridNum <= GridNum + 1;
+		end
+		
+		clk_fps <= (clk_3120Hz < 1923) ? 1 : 0;
 	
 		// Start Tranmission by Display blanking
-		if(clk_3120Hz == 3725) begin// Blank and LAT rise at the same time
+		if(clk_3120Hz == 0) begin// Blank and LAT rise at the same time
 			BLK_CTRL <= 1;
 			LAT_CTRL <= 1;
 			end
 		
 		// Latch goes 0 after 3 clock cycles or 250ns at 12MHz
-		if(clk_3120Hz == 3728)
+		if(clk_3120Hz == 3)
 			LAT_CTRL <= 0;
 			
 		// Blank goes 0 after 120 clock cycles or 10us at 12MHz.
-		if(clk_3120Hz == 3842) begin// Bring BLK to logic 0, 3 clock cycles away (250ns at 12MHz) from when the transmission start.
+		if(clk_3120Hz == 120) // Bring BLK to logic 0, 3 clock cycles away (250ns at 12MHz) from when the transmission start.
 			BLK_CTRL <= 0;
+
+
+		// Tri-SPI and GCP will start when clk_3120Hz reset to 0
+		if(clk_3120Hz == 124)
 			SPI_start <= 1;
-		end
+		if(clk_3120Hz == 125)
+			CLOCK_GATE <= 1;
+		// and will stop after 288 clock cycles 
+		if(clk_3120Hz == 412) 
+			SPI_start <= 0;
+		if(clk_3120Hz == 413)
+			CLOCK_GATE <= 0;
+			
 		
 	end 
-	else begin
+else begin
 		BLK_CTRL <= 0;
 		LAT_CTRL <= 0;
 		SPI_start <= 0;
-	end
+end
+
 end
 
 // Generate this part every 1/3120 sec.
@@ -440,15 +528,8 @@ always@(posedge clk_fps) begin
 	
 	//output SPI data and generate GCP at the same time.
 	
-	if(GridNum == 53)// MN15439A has 52 Grids, reset them when exceed 53.
-		GridNum <= 1;
-	else
-		GridNum <= GridNum + 1;
-		
-	/*if(SCS)
-		SPI_start <= 1;
-	else
-		SPI_start <= 0;*/
+	
+
 end
 
 

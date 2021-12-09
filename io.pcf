@@ -1,5 +1,5 @@
 # Clock generated via on board STM32 clone that ack as USB iCELink on iCESugar nano board.
-set_io CLK 	D1
+set_io SYS_CLK 	D1
 
 # Tri SPI output pins to MN15439.
 
