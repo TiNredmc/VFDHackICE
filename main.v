@@ -14,6 +14,7 @@ module TSPI(input CLK,
 	output wire S_CLK,// SPI Clock
 	input SCE, // Module "Chip Enable"
 	input CCE, // Clock Gating
+	input WRAD, // When this goes 1, write address to BRAM.
 	input [5:0] GN,// Grid number from Display scan "always" in "main" module.
 	
 	// These is GRAM stuffs, Send Address to GRAM, read from it and send to Display.
@@ -41,35 +42,30 @@ reg [2:0] pixBlock [1:0][5:0];
 // LUT to replace multiplication with 3 of Grid number, use for move byte column offset that read from GRAM.
 reg [7:0] ColSel [51:0];
 
-// LUT use to check when to turn bit on for certain grid number
-reg [8:0] GridLUT [51:0];
-
 // reg store value to count to 39 (completed 1 column).
 reg [6:0] clk_cnt39 = 0;
 
 // use in for loop.
-integer i,j,k;
+integer i,j;
 
 // Tri-SPI clock running the same freq as System clock.
-// But can be completely gatef by set SCE to 0.
-assign S_CLK = CLK & CCE;
+// But can be completely gate by set SCE to 0.
+assign S_CLK = CLK & SCE;
 assign MEM_CE = SCE;
 
 initial begin
 	BitCounter <= 0;
 	SOUT[2:0] <= 3'b0;
 	Mod6 <= 0;
+
 	
 	// LUT Const stuffs 
 	for(i=0; i < 39;i = i+1)
 		RowSel[i] <= (77*i);
 		
 	for(j=0; j < 52;j = j+1)
-		ColSel[j] <= (3*j) >> 1;
-	
-	for(k=1; k < 53;k = k+1)
-		GridLUT[k-1] <= k + 233;
-	
+		ColSel[j] <= (j/2) * 3;
+
 	pixLUT[0] <= 0;// A
 	pixLUT[1] <= 2;// F
 	pixLUT[2] <= 0;// B
@@ -81,24 +77,35 @@ initial begin
 	//pixBlock[GN%2][Mod6]
 	// GN%2 = 0, Grid is even number, turn on only DEF
 	pixBlock[0][0] <= 3'b000;// A off
-	pixBlock[0][1] <= 3'b000;// B off
-	pixBlock[0][2] <= 3'b000;// C off
-	pixBlock[0][3] <= 3'b111;// D on
-	pixBlock[0][4] <= 3'b111;// E on
-	pixBlock[0][5] <= 3'b111;// F on
+	pixBlock[0][1] <= 3'b111;// F on
+	pixBlock[0][2] <= 3'b000;// B off
+	pixBlock[0][3] <= 3'b111;// E on
+	pixBlock[0][4] <= 3'b000;// C off
+	pixBlock[0][5] <= 3'b111;// D on
 	// GN%2 = 1, Grid is odd number, turn on only ABC
 	pixBlock[1][0] <= 3'b111;// A on
-	pixBlock[1][1] <= 3'b111;// B on
-	pixBlock[1][2] <= 3'b111;// C on
-	pixBlock[1][3] <= 3'b000;// D off
-	pixBlock[1][4] <= 3'b000;// E off
-	pixBlock[1][5] <= 3'b000;// F off
+	pixBlock[1][1] <= 3'b000;// F off
+	pixBlock[1][2] <= 3'b111;// B on
+	pixBlock[1][3] <= 3'b000;// E off
+	pixBlock[1][4] <= 3'b111;// C on
+	pixBlock[1][5] <= 3'b000;// D off
 	
+end
+
+always@(posedge WRAD)begin
+	if(SCE) begin
+		MEM_ADDR <= pixLUT[Mod6]; // Locate the byte containing A,B,C,D,E or F pixel 
+		MEM_ADDR <= MEM_ADDR + ColSel[GN-1];// Grid number will determine which column on GRAM will be selected.
+		MEM_ADDR <= MEM_ADDR + RowSel[clk_cnt39];// This will move to new row on GRAM.
+	end 
+	else begin
+		MEM_ADDR <= 0;
+	end
 end
 
 always@(posedge CLK) begin 
 
-if(SCE) begin 
+if(CCE) begin 
 	// Keep track of clock cycle, we send 288bit worth of data.
 	BitCounter <= BitCounter + 1;// count bit number / clock cycle.
 	
@@ -109,7 +116,7 @@ if(SCE) begin
 	end 
 	else
 		Mod6 <= Mod6 + 1;
-				
+	
 	//use LUTs and grid number to calculate the memory offset to read from.
 	// We treat the plain linear 3003 bytes mem as 77 byte wide (column) and 39 row tall.
 	// Col0		Col1	Col2	...	Col76
@@ -138,21 +145,23 @@ if(SCE) begin
 	
 	// send 6 pixels 39 times took 234 clock cycle, after 234 cycles, we'll send the Grid control data.
 	if(BitCounter < 234) begin// Send Pixels data.
-	
-		MEM_ADDR <= pixLUT[Mod6]; // Locate the byte containing A,B,C,D,E or F pixel 
-		MEM_ADDR <= MEM_ADDR + ColSel[GN-1];// Grid number will determine which column on GRAM will be selected.
-		MEM_ADDR <= MEM_ADDR + RowSel[clk_cnt39];// This will move to new row on GRAM.
 		
-		if(BitCounter%2)
-			SOUT[2:0] <= MEM_BYTE[2:0] & pixBlock[GN%2][Mod6];
-		else
-			SOUT[2:0] <= MEM_BYTE[5:3] & pixBlock[GN%2][Mod6];
+		
+		case(Mod6)// some pixel column read from [2:0] some read from [5:3]
+			1: SOUT[2:0] <= MEM_BYTE[5:3] & pixBlock[GN%2][Mod6];// A
+			2: SOUT[2:0] <= MEM_BYTE[2:0] & pixBlock[GN%2][Mod6];// F
+			3: SOUT[2:0] <= MEM_BYTE[2:0] & pixBlock[GN%2][Mod6];// B
+			4: SOUT[2:0] <= MEM_BYTE[5:3] & pixBlock[GN%2][Mod6];// E
+			5: SOUT[2:0] <= MEM_BYTE[5:3] & pixBlock[GN%2][Mod6];// C
+			0: SOUT[2:0] <= MEM_BYTE[2:0] & pixBlock[GN%2][Mod6];// D
+		endcase
 			
 	end
 	else begin// Send Grid Control data.
 		// after bit 233, bit 234 (and so on) are Grid Number bit.
 		// These if will turn Grid N and N+1 on 
 		// I know it's reallly messy (I literally manually type it all and cpoy and  paste xD.).
+		// But it really working. So, if it works, don't touch it.
 		case(GN) 
 			1: SOUT[2:0] <= ((BitCounter == 234) || (BitCounter == 235)) ? 3'b111 : 3'b000;
 			2: SOUT[2:0] <= ((BitCounter == 235) || (BitCounter == 236)) ? 3'b111 : 3'b000;
@@ -353,8 +362,8 @@ reg [7:0] mem [3002:0];
 integer fill=0;
 
 initial begin
-	for(fill = 0;fill < 3003; fill++)
-		mem[fill] <= 255;// fill the first byte to let Yosys infer to BRAM.
+	for(fill = 0;fill < 3003; fill++) 
+		mem[fill] <= 8'b00000000;// fill the first byte to let Yosys infer to BRAM.
 end
 
 always@(posedge CLK) begin// reading from RAM sync with system clock 
@@ -368,6 +377,7 @@ always@(posedge W_CLK) begin// writing to RAM sync with Slave SPI clock.
 end
 	
 endmodule// GRAM
+
 
 module top(input SYS_CLK, 
 	output wire S1, // Serial data 1 (VFD)
@@ -385,11 +395,11 @@ reg CLK,CLOCK_GATE;
 reg [6:0]CLK_TICK_DIV = 0;
 
 // Clock divider to get 60FPS at scan rate of 52 times per frame = 3120Hz
-reg clk_fps = 0;// pesudo clock for display refreshing, aiming for 60 fps (3120Hz).
-reg [17:0] clk_3120Hz = 17'b0;
+reg [11:0] clk_3120Hz = 11'b0;
 
 // these set to 1 after pulsed BLK and LAT pin.
 reg SPI_start = 0;
+reg writeADDR = 0;
 
 // store the current VFD gate number
 reg [5:0] GridNum; //store grid number from 1 to 52 (52 grids), I'll automatically start at 1 later on.
@@ -423,6 +433,7 @@ TSPI SerialOut(
 	
 	.SCE(SPI_start), 
 	.CCE(CLOCK_GATE),
+	.WRAD(writeADDR),
 	.GN(GridNum),
 	
 	.MEM_ADDR(GRAM_ADDR),
@@ -442,7 +453,7 @@ SSPI SerialIN(
 	);// parse all pins for using as Slave SPI device.
 
 GRAM GraphicRAM(
-	.CLK(CLK),
+	.CLK(SYS_CLK),
 	.W_CLK(SSCK),
 	
 	// Mem writeto part, used by Slave SPI.
@@ -455,17 +466,26 @@ GRAM GraphicRAM(
 	.GRAM_ADDR_R(GRAM_ADDR),
 	.G_CE_R(GRAM_CE)
 	);// parse all regs and wires for GRAM.
-	
+
+
 always@(posedge SYS_CLK)begin 
 		CLK_TICK_DIV <= CLK_TICK_DIV + 1;
-		if(CLK_TICK_DIV == 127)
+		if(CLK_TICK_DIV == 3)
 			CLK_TICK_DIV <= 0;
-		CLK <= (CLK_TICK_DIV < 64) ? 1 : 0;
+		//CLK <= (CLK_TICK_DIV < 2) ? 1 : 0;
+		
+		case(CLK_TICK_DIV)
+		0: begin CLK <= 0; writeADDR <= 1; end
+		1: begin CLK <= 0; writeADDR <= 0; end
+		2: CLK <= 1;
+		3: CLK <= 1;
+		endcase
 end
+
+//assign CLK = SYS_CLK;
 
 initial begin
 	GridNum <= 1;
-
 end
 
 // Things that work at System clock 
@@ -476,61 +496,77 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 		// actually it's 3120Hz (each frame need to update display 52 times (52 grids), we want 60fps, 1 frame last 1/(60*52) second).
 		// 1/(60*52) = 320us,  3.2e-4 * 1.2e7(Hz) = 3846 <- use in if compare. 
 		clk_3120Hz <= clk_3120Hz + 1;
-		if(clk_3120Hz == 413) begin
-			clk_3120Hz <= 17'b0;
-			if(GridNum == 52)// MN15439A has 52 Grids, reset them when exceed 53.
+		if(clk_3120Hz == 1024) begin
+			clk_3120Hz <= 11'b0;
+			if(GridNum == 52)// MN15439A has 52 Grids, reset them when reached 52.
 				GridNum <= 1;
 			else
 				GridNum <= GridNum + 1;
 		end
-		
-		clk_fps <= (clk_3120Hz < 1923) ? 1 : 0;
-	
+		  
 		// Start Tranmission by Display blanking
 		if(clk_3120Hz == 0) begin// Blank and LAT rise at the same time
 			BLK_CTRL <= 1;
-			LAT_CTRL <= 1;
+			//LAT_CTRL <= 1;
 			end
+		if(clk_3120Hz == 1) 
+			LAT_CTRL <= 1;
 		
 		// Latch goes 0 after 3 clock cycles or 250ns at 12MHz
-		if(clk_3120Hz == 3)
+		if(clk_3120Hz == 4)
 			LAT_CTRL <= 0;
 			
 		// Blank goes 0 after 120 clock cycles or 10us at 12MHz.
-		if(clk_3120Hz == 120) // Bring BLK to logic 0, 3 clock cycles away (250ns at 12MHz) from when the transmission start.
+		if(clk_3120Hz == 5) // Bring BLK to logic 0, 3 clock cycles away (250ns at 12MHz) from when the transmission start.
 			BLK_CTRL <= 0;
-
 
 		// Tri-SPI and GCP will start when clk_3120Hz reset to 0
 		if(clk_3120Hz == 124)
 			SPI_start <= 1;
-		if(clk_3120Hz == 125)
+			
+		if(clk_3120Hz == 125)// SPI clock need to start after the Serial data pin. because of BRAM access will lack behide 1 cycle.
 			CLOCK_GATE <= 1;
+			
 		// and will stop after 288 clock cycles 
 		if(clk_3120Hz == 412) 
 			SPI_start <= 0;
+			
 		if(clk_3120Hz == 413)
 			CLOCK_GATE <= 0;
 			
-		
 	end 
-else begin
+else begin // When host want to transfer data to FPGA,We pause and reset the display scan.
 		BLK_CTRL <= 0;
 		LAT_CTRL <= 0;
 		SPI_start <= 0;
+		CLOCK_GATE <= 0;
 end
 
 end
-
-// Generate this part every 1/3120 sec.
-always@(posedge clk_fps) begin
-	// total time 25us 
-	
-	//output SPI data and generate GCP at the same time.
-	
-	
-
-end
-
 
 endmodule// top
+
+// Pseudo code for converting 8bit RGB into 3 bit Grayscale 00XXXYYY format.
+/*
+void imgto3(void *img8bit, ,size RGBsize, void *img3bit, size Graysize){
+	uint8_t RChan, GChan, BChan, RGBMerge;
+	
+	// Conversion algorithm to map 0-255 to 0-7
+	// lvl = image8bit*7/255;
+	
+	for(uint32_t i=0; i < RGBsize/3; i ++){
+		// Parse each color brightness level and convert to 3 bit for each level 
+		RChan = *(img8bit + (i*3)) * 7 / 255;
+		GChan = *(image8bit + 1 + (i*3)) * 7 / 255;
+		BChan = *(image8bit + 2 + (i*3)) * 7 / 255;
+	
+		// need the smarter Algorithm.
+		RGBMerge = (RChan + GChan + BChan) / 3;// merge all color channel into 1
+		
+		// img3bit format is 00XXXYYY.
+		// put RGBMerge data into the 3bit bytes
+		*img3bit |= RGBMerge << ( i%2 ? 0 : 3);
+		img3bit = i/2;// move to next byte after converted 2 pixels.
+	}
+	
+*/
