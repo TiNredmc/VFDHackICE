@@ -19,6 +19,6 @@ set_io LAT	B5
 set_io PWM	C6
 
 # FPGA's slave SPI interface as Framebuffer input.
-set_io SSI	B3
-set_io SSCK	A3
+set_io SSI	B4
+set_io SSCK	E2
 set_io SCS	C5
