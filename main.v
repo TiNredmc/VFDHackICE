@@ -24,11 +24,6 @@ reg [7:0] SPIbuffer;
 reg [11:0] byteBufCnt;// 12 bit counter for 3003 bytes data + 1 CMD bytes.
 reg [2:0] bitBufCnt;// 3-bit counter from 0-7
 
-initial begin
-	SPIbuffer <= 0;
-	byteBufCnt <= 0;
-	bitBufCnt <= 0;
-end
 
 always@(posedge SCLK) begin
 
@@ -192,49 +187,9 @@ reg [6:0] clk_cnt39 = 0;
 // use in for loop.
 integer i,j;
 
-initial begin
-	GN <= 1;
-	BitCounter <= 0;
-	SOUT[2:0] <= 3'b0;
-	Mod6 <= 0;
-
-	
-	// LUT Const stuffs 
-	for(i=0; i < 39;i = i+1)
-		RowSel[i] <= (77*i);
-		
-	for(j=0; j < 52;j = j+1)
-		ColSel[j] <= (j/2) * 3;
-
-	pixLUT[0] <= 0;// A
-	pixLUT[1] <= 2;// F
-	pixLUT[2] <= 0;// B
-	pixLUT[3] <= 2;// E
-	pixLUT[4] <= 1;// C
-	pixLUT[5] <= 1;// D
-	
-	// some pixel columns need to be turned of depend on Odd or Even grid number currently selected.
-	//pixBlock[GN%2][Mod6]
-	// GN%2 = 0, Grid is even number, turn on only DEF
-	pixBlock[0][0] <= 3'b000;// A off
-	pixBlock[0][1] <= 3'b111;// F on
-	pixBlock[0][2] <= 3'b000;// B off
-	pixBlock[0][3] <= 3'b111;// E on
-	pixBlock[0][4] <= 3'b000;// C off
-	pixBlock[0][5] <= 3'b111;// D on
-	// GN%2 = 1, Grid is odd number, turn on only ABC
-	pixBlock[1][0] <= 3'b111;// A on
-	pixBlock[1][1] <= 3'b000;// F off
-	pixBlock[1][2] <= 3'b111;// B on
-	pixBlock[1][3] <= 3'b000;// E off
-	pixBlock[1][4] <= 3'b111;// C on
-	pixBlock[1][5] <= 3'b000;// D off
-	
-end
-
 // For FSM
-reg [1:0]main_fsm = 0;
-reg [1:0]bram_fsm = 0;
+reg [1:0]main_fsm;
+reg [1:0]bram_fsm;
 reg [2:0]BL_CTRL = 0;
 
 // main FSM
@@ -243,6 +198,46 @@ always@(posedge SYS_CLK)begin
 if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 	case(main_fsm)
 	0:begin// VFD Blank and Latch control.
+	
+		// Initialize default values.
+		GN <= 1;
+		BitCounter <= 0;
+		SOUT[2:0] <= 3'b0;
+		Mod6 <= 0;
+
+		
+		// LUT Const stuffs 
+		for(i=0; i < 39;i = i+1)
+			RowSel[i] <= (77*i);
+			
+		for(j=0; j < 52;j = j+1)
+			ColSel[j] <= (j/2) * 3;
+
+		pixLUT[0] <= 0;// A
+		pixLUT[1] <= 2;// F
+		pixLUT[2] <= 0;// B
+		pixLUT[3] <= 2;// E
+		pixLUT[4] <= 1;// C
+		pixLUT[5] <= 1;// D
+		
+		// some pixel columns need to be turned of depend on Odd or Even grid number currently selected.
+		//pixBlock[GN%2][Mod6]
+		// GN%2 = 0, Grid is even number, turn on only DEF
+		pixBlock[0][0] <= 3'b000;// A off
+		pixBlock[0][1] <= 3'b111;// F on
+		pixBlock[0][2] <= 3'b000;// B off
+		pixBlock[0][3] <= 3'b111;// E on
+		pixBlock[0][4] <= 3'b000;// C off
+		pixBlock[0][5] <= 3'b111;// D on
+		// GN%2 = 1, Grid is odd number, turn on only ABC
+		pixBlock[1][0] <= 3'b111;// A on
+		pixBlock[1][1] <= 3'b000;// F off
+		pixBlock[1][2] <= 3'b111;// B on
+		pixBlock[1][3] <= 3'b000;// E off
+		pixBlock[1][4] <= 3'b111;// C on
+		pixBlock[1][5] <= 3'b000;// D off
+	
+	
 		BL_CTRL <= BL_CTRL + 1;
 		if(BL_CTRL == 0)begin
 			BLK_CTRL <= 1;
@@ -266,7 +261,8 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 	
 	1:begin// select BRAM Address.
 		vfd_clk <= 0;
-		case(bram_fsm)
+		
+		case(bram_fsm)// state machine for reading BRAM (framebuffer).
 		0: begin // Read Enable.
 			GRAM_CE <= 1;
 			bram_fsm <= 1;
@@ -305,6 +301,7 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 	
 	2:begin// Shift out to VFD display and do the GCP signal generation.
 		vfd_clk <= 1;
+		
 		// When 1 Column / Grid number data is wrote to the Display. main fsm goes back to Blank / Lat control.
 		// Keep track of clock cycle, we send 288bit worth of data.
 		BitCounter <= BitCounter + 1;// count bit number / clock cycle.
@@ -329,6 +326,8 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 		if(Mod6 == 5) begin 
 			Mod6 <= 0;// reset the mod counter.
 			clk_cnt39 <= clk_cnt39 + 1;// keep track of how many times 6bit pixels have been sent.
+			if(clk_cnt39 <= 38)
+				clk_cnt39 <= 0;
 		end 
 			
 // =================================
@@ -338,12 +337,12 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 		if(BitCounter < 234) begin// Send Pixels data.
 			
 			case(Mod6)// some pixel column read from [2:0] some read from [5:3]
-				1: SOUT[2:0] <= GRAM_BYTE[5:3] & pixBlock[GN%2][Mod6];// A
-				2: SOUT[2:0] <= GRAM_BYTE[2:0] & pixBlock[GN%2][Mod6];// F
-				3: SOUT[2:0] <= GRAM_BYTE[2:0] & pixBlock[GN%2][Mod6];// B
-				4: SOUT[2:0] <= GRAM_BYTE[5:3] & pixBlock[GN%2][Mod6];// E
-				5: SOUT[2:0] <= GRAM_BYTE[5:3] & pixBlock[GN%2][Mod6];// C
-				0: SOUT[2:0] <= GRAM_BYTE[2:0] & pixBlock[GN%2][Mod6];// D
+				0: SOUT[2:0] <= GRAM_BYTE[5:3] & pixBlock[GN%2][Mod6];// A
+				1: SOUT[2:0] <= GRAM_BYTE[2:0] & pixBlock[GN%2][Mod6];// F
+				2: SOUT[2:0] <= GRAM_BYTE[2:0] & pixBlock[GN%2][Mod6];// B
+				3: SOUT[2:0] <= GRAM_BYTE[5:3] & pixBlock[GN%2][Mod6];// E
+				4: SOUT[2:0] <= GRAM_BYTE[5:3] & pixBlock[GN%2][Mod6];// C
+				5: SOUT[2:0] <= GRAM_BYTE[2:0] & pixBlock[GN%2][Mod6];// D
 			endcase
 				
 		end
