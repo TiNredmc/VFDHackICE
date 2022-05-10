@@ -65,14 +65,14 @@ Also the Dislpay accept the pixel data in this weird order " A F B E C D" instea
 Why FPGA?
 =
 
-The FPGA did all heavy-lifting tasks. Which ordinary microcontroller can do (can doesn't mean that it's great). FPGA offers the faster operation, since everything is so Low-level that I can't even use "Division" operation (but instead use clock counter, since I need to divide the clock counter value by 6).  
+The FPGA did all heavy-lifting tasks. Which ordinary microcontroller can do (can doesn't mean that it's great). FPGA offers the faster operation. So, I don't need to worry about the lack of speed.  
   
-So these are HEAVY LIFTING taks that FPGA need to do.  
+So these are HEAVY LIFTING tasks that FPGA need to do.  
 1. working as Display Buffer.
 2. act as SPI slave device.
 3. generate Gradient Control Pulse (GCP) for MN15439A.
 4. Split 3 bit pixel data into separated Serial Data wire (Tri-SPI PHY).
-5. Display refreshing 3120Hz (52 times per 1 frame @ 60 fps). 
+5. Display refreshing (52 times per 1 frame @ 60 fps). 
 
 The most powerful MCU that I own (STM32F303) can do only 2 or 3 things at once, I ran into the problem that If I dedicate 2 SPI interface to 2 DMA controllers and 1 left for CPU to run. I won't be able to generate the GCP signal (Frequency change in realtime. AFAIK, there's no STM32 Timer that can do this). This limitation is real pure frustation. Even though I can use another STM8 to generate the GCP by feeding the SPI clock as reference input from STM32. but If that is gonna be complicated, Why don't I use FPGA.  
   
