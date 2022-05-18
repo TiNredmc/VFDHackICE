@@ -22,7 +22,7 @@ module SSPI (
 	
 reg [7:0] SPIbuffer;
 reg [11:0] byteBufCnt;// 12 bit counter for 3003 bytes data + 1 CMD bytes.
-reg [2:0] bitBufCnt;// 3-bit counter from 0-7
+reg [3:0] bitBufCnt;// 3-bit counter from 0-7
 
 
 always@(posedge SCLK) begin
@@ -30,7 +30,7 @@ always@(posedge SCLK) begin
 if(~CE) begin
 		bitBufCnt <= bitBufCnt + 1;// keep tack of bit 
 		
-		if(bitBufCnt == 7) begin// every 8 clock cycle (or 8 data bit).
+		if(bitBufCnt == 8) begin// every 8 clock cycle (or 8 data bit).
 			bitBufCnt <= 0;// reset bit counter 
 			byteBufCnt <= byteBufCnt + 1;// counting how many bytes have been sampled.
 			M_BYTE <= SPIbuffer;// copy the freshly made byte to mem.
@@ -108,12 +108,12 @@ module top(input SYS_CLK,
 	input SCS); // Chip select (Active Low, controlled by Host).
 
 // BLANK and LATCH control thingy
-reg BLK_CTRL, LAT_CTRL;
+reg BLK_CTRL = 0, LAT_CTRL = 0;
 assign BLK = BLK_CTRL;
 assign LAT = LAT_CTRL;
 
 // Memory related regs
-reg [11:0] GRAM_ADDR; // Graphic RAM address, just the alternative name of MEM_ADDR.
+reg [11:0] GRAM_ADDR = 0; // Graphic RAM address, just the alternative name of MEM_ADDR.
 wire [7:0] GRAM_BYTE;
 reg GRAM_CE;
 
@@ -151,7 +151,7 @@ GRAM GraphicRAM(
 	);// parse all regs and wires for GRAM.
 
 // Serial output reg
-reg [2:0]SOUT;
+reg [2:0]SOUT = 0;
 assign S1 = SOUT[0];
 assign S2 = SOUT[1];
 assign S3 = SOUT[2];
@@ -161,13 +161,13 @@ reg GCP = 0;
 assign PWM = GCP;
 
 // Grid Number
-reg [5:0]GN;
+reg [5:0]GN = 0;
 
 // Keep track of current bit that shifting out.
-reg [9:0] BitCounter;
+reg [9:0] BitCounter = 0;
 
 // Count 0-5 instead of using modulo.
-reg [2:0] Mod6;
+reg [2:0] Mod6 = 0;
 
 // LUT for converting the (MSB)abcdef(LSB) to (MSB)afbecd(LSB) format require by display.
 reg [1:0] pixLUT [5:0];
@@ -188,8 +188,8 @@ reg [6:0] clk_cnt39 = 0;
 integer i,j;
 
 // For FSM
-reg [1:0]main_fsm;
-reg [1:0]bram_fsm;
+reg [1:0]main_fsm = 0;
+reg [1:0]bram_fsm = 0;
 reg [2:0]BL_CTRL = 0;
 
 // main FSM
@@ -200,7 +200,6 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 	0:begin// VFD Blank and Latch control.
 	
 		// Initialize default values.
-		GN <= 1;
 		BitCounter <= 0;
 		SOUT[2:0] <= 3'b0;
 		Mod6 <= 0;
@@ -275,7 +274,7 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 			// normally Display only accept this weird AFBECD pixels order. assign each pixels to number and we'll get.
 			// A=0, F=1, B=2, E=3, C=4, D=5. Putting these number into [] of pixLut will return the Byte number, indicates where to look for "that" pixel 3bit data.
 		
-			// ColSel[GN-1] >> 1 use for moving column 3 byte each step.
+			// ColSel[GN-1] is used for moving column 3 byte each step.
 			// grid 1 and 2, grid 3 and 4, 5 and 6 and so on, shares same 3 byte column, because 1 column contain 2 pixels data. each time display update, we send 3 column to display.
 			// This will calculate where the column of byte contain pixels when It's Grid number X.
 		
@@ -293,7 +292,6 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 			bram_fsm <= 1;
 			main_fsm <= 2;
 		end
-
 		
 		endcase// bram_fsm
 	
@@ -311,7 +309,6 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 			
 			Mod6 <= 0;
 			clk_cnt39 <= 0;
-			
 			GN <= GN + 1;// move to next grid.
 			if(GN == 52)begin// On next clock cycle, reset Grid Number to 1
 				GN <= 1;
@@ -408,6 +405,7 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 					SOUT[2:0] <= 3'b000;
 			endcase// case(GN)
 			
+		end	
 // =================================
 // ======= GCP Signal gen ==========
 // =================================
@@ -433,7 +431,6 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 	
 			endcase
 			
-		end	
 		
 	end
 	
@@ -447,10 +444,8 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 		Mod6 <= 0;// reset the mod 6 counter.
 		BitCounter <= 0;// reset bit counter to 0.
 		clk_cnt39 <= 0;// reset row counter to 0.
-		
-		
+				
 	end
-	
 	
 	endcase// main_fsm
 	
@@ -486,13 +481,13 @@ void imgto3(void *img8bit, ,size RGBsize, void *img3bit, size Graysize){
 	uint8_t RChan, GChan, BChan, RGBMerge;
 	
 	// Conversion algorithm to map 0-255 to 0-7
-	// lvl = image8bit*7/255;
+	// lvl = (image8bit*7)/255;
 	
-	for(uint32_t i=0; i < RGBsize/3; i ++){
+	for(uint32_t i=0; i < RGBsize; i+= 3){
 		// Parse each color brightness level and convert to 3 bit for each level 
-		RChan = *(img8bit + (i*3)) * 7 / 255;
-		GChan = *(image8bit + 1 + (i*3)) * 7 / 255;
-		BChan = *(image8bit + 2 + (i*3)) * 7 / 255;
+		RChan = (*(img8bit + i) * 7) / 255;
+		GChan = (*(image8bit + 1 + i) * 7)/ 255;
+		BChan = (*(image8bit + 2 + i) * 7) / 255;
 	
 		// need the smarter Algorithm.
 		RGBMerge = (RChan + GChan + BChan) / 3;// merge all color channel into 1
@@ -500,7 +495,7 @@ void imgto3(void *img8bit, ,size RGBsize, void *img3bit, size Graysize){
 		// img3bit format is 00XXXYYY.
 		// put RGBMerge data into the 3bit bytes
 		*img3bit |= RGBMerge << ( i%2 ? 0 : 3);
-		img3bit = i/2;// move to next byte after converted 2 pixels.
+		img3bit = i >> 2;// move to next byte after converted 2 pixels.
 	}
 }	
 */
