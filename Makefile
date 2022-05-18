@@ -9,7 +9,7 @@ build:
 	icepack $(source_file).asc $(source_file).bin
 
 clean:
-	rm -rf $(source_file).blif $(source_file).asc $(source_file).bin
+	rm -rf $(source_file).blif $(source_file).asc $(source_file).bin a.out
 
 verify:
 	iverilog -D VCD_OUTPUT=/usr/local/share/yosys/ice40/cells_sim.v main.v
