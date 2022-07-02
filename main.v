@@ -9,8 +9,10 @@
 // ======= Slave SPI PHY ===========
 // =================================
 
-// Slave SPI module, Host -> FPGA
+// Slave SPI module, Host -> FPGA. Safe Maximum speed is system clock/4 
 module SSPI (
+	input CLK,
+	
 	input MOSI,
 	input SCLK,
 	input CE,
@@ -21,36 +23,61 @@ module SSPI (
 	);
 	
 reg [7:0] SPIbuffer;
-reg [11:0] byteBufCnt;// 12 bit counter for 3003 bytes data + 1 CMD bytes.
+reg [11:0] byteBufCnt;// 12 bit counter for 3003 bytes data 
 reg [3:0] bitBufCnt;// 3-bit counter from 0-7
+reg [1:0] SPI_FSM;
 
+always@(posedge CLK)begin
 
-always@(posedge SCLK) begin
-
-if(~CE) begin
-		bitBufCnt <= bitBufCnt + 1;// keep tack of bit 
-		
-		if(bitBufCnt == 8) begin// every 8 clock cycle (or 8 data bit).
-			bitBufCnt <= 0;// reset bit counter 
-			byteBufCnt <= byteBufCnt + 1;// counting how many bytes have been sampled.
-			M_BYTE <= SPIbuffer;// copy the freshly made byte to mem.
-			M_CE <= 1;// at the same time, turn write enable on.
+	case(SPI_FSM)
+	0: begin // wait until CE goes low
+		if(CE == 0)begin
+			M_CE <= 1;
+			SPI_FSM <= 1;
 		end
-		else
-			M_CE <= 0;
+		else begin
+			SPIbuffer <= 0;
+			bitBufCnt <= 0;
+			byteBufCnt <= 0;
+		end
 		
-					
-		M_ADDR <= byteBufCnt;// byte counter keep tracks of memory address (byte number 0 = mem[0], byte number 1 = mem[1] and so on).
-			
-		SPIbuffer[bitBufCnt] <= MOSI;// storing each bit into 8bit reg.
-end 
-else begin// Host release SPI chip select. CE logic lvl goes back to HIGH
-	M_CE <= 0;// Disable mem write.
-	bitBufCnt <= 0;// reset counter
-	byteBufCnt <= 0;// reset byte counter.
-end
+	end
 
-end// always@
+	1: begin// sample data bit at spi clock goes high
+		if(SCLK == 1)begin
+			SPIbuffer <= {SPIbuffer[6:0], MOSI};// Shift register save each bit into SPI buffer.
+			bitBufCnt <= bitBufCnt + 1;
+			if(bitBufCnt == 7)begin
+				byteBufCnt <= byteBufCnt + 1;
+				if(byteBufCnt == 3002)// if we received all 3003 bytes (frame data). Ignore SPI data until next CE fall edge.
+					SPI_FSM <= 3;
+				else
+					SPI_FSM <= 2;
+				M_ADDR <= byteBufCnt;
+				M_BYTE <= SPIbuffer;
+			end
+			else
+				SPI_FSM <= 2;	
+		end
+	end
+	
+	2: begin// wait until SPI clock went back low.
+		if(SCLK == 0)// if clock goes back low, back to stage 1 and wait to sample next bit.
+			SPI_FSM <= 1;
+			
+	end
+	
+	3: begin// wait until CE goes back high.
+		if(CE == 1)begin
+			SPI_FSM <= 0;
+			M_CE <= 0;
+			M_ADDR <= 0;
+		end
+		
+	end
+
+	endcase// SPI_FSM
+end
 
 endmodule// SSPI
 
@@ -79,7 +106,7 @@ integer fill=0;
 
 initial begin
 	for(fill = 0;fill < 3003; fill++) 
-		mem[fill] <= 8'b00000111;// initialize BRAM as BLANK.
+		mem[fill] <= 8'b00000000;// initialize BRAM as BLANK.
 end
 
 always@(posedge CLK) begin// reading from RAM sync with system clock 
@@ -96,6 +123,8 @@ endmodule// GRAM
 
 
 module top(input SYS_CLK, 
+
+	// For VFD display.
 	output wire S1, // Serial data 1 (VFD)
 	output wire S2, // Serial data 2 (VFD)
 	output wire S3, // Serial data 3 (VFD)
@@ -103,9 +132,13 @@ module top(input SYS_CLK,
 	output wire LAT, // Serial Latch (VFD)
 	output wire PWM, // Gradient Control Pulse (VFD)
 	output wire SCK, // Serial Clock (VFD)
+	
+	// For Host SPI interface (host out fpga in).
 	input SSI, // Master out Slave in SPI (Host to FPGA)
 	input SSCK, // Slave SPI clock input (Host to FPGA)
-	input SCS); // Chip select (Active Low, controlled by Host).
+	input SCS,// Chip select (Active Low, controlled by Host).
+	output reg EOF // End of frame to interrupt host to send new frame.
+	); 
 
 // BLANK and LATCH control thingy
 reg BLK_CTRL = 0, LAT_CTRL = 0;
@@ -126,6 +159,8 @@ assign SCK = vfd_clk;
 
 // Slave SPI PHY
 SSPI SerialIN(
+	.CLK(SYS_CLK),
+
 	.MOSI(SSI), 
 	.SCLK(SSCK), 
 	.CE(SCS),
@@ -137,7 +172,7 @@ SSPI SerialIN(
 
 GRAM GraphicRAM(
 	.CLK(SYS_CLK),
-	.W_CLK(SSCK),
+	.W_CLK(SYS_CLK),
 	
 	// Mem writeto part, used by Slave SPI.
 	.GRAM_IN(GRAM_SPI_READ),
@@ -195,7 +230,7 @@ reg [2:0]BL_CTRL = 0;
 // main FSM
 always@(posedge SYS_CLK)begin
 
-if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
+if(SCS == 1) begin // Gating with SCS pin, will start when Host release CS pin.
 	case(main_fsm)
 	0:begin// VFD Blank and Latch control.
 	
@@ -204,6 +239,8 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 		SOUT[2:0] <= 3'b0;
 		Mod6 <= 0;
 
+		// clear end of frame interrupt.
+		EOF <= 0;
 		
 		// LUT Const stuffs 
 		for(i=0; i < 39;i = i+1)
@@ -253,6 +290,7 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 		if(BL_CTRL == 6)begin// after 6 clock cycles at 12<Hz, bring Blank down.
 			BLK_CTRL <= 0;
 			BL_CTRL <= 0;
+			GRAM_CE <= 1;
 			main_fsm <= 1;// move to next main fsm stage, Write BRAM read address.
 		end
 	
@@ -262,12 +300,7 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 		vfd_clk <= 0;
 		
 		case(bram_fsm)// state machine for reading BRAM (framebuffer).
-		0: begin // Read Enable.
-			GRAM_CE <= 1;
-			bram_fsm <= 1;
-		end
-		
-		1: begin// Write read address to BRAM
+		0: begin// Write read address to BRAM
 			// pixLUT[] is look up table to locate which pixel is where on the Memory. Memory format looks like this.
 			//  [Byte 0]  [Byte 1]  [Byte 2]
 			// [00AAABBB][00CCCDDD][00EEEFFF]
@@ -285,11 +318,11 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 			
 			GRAM_ADDR <= pixLUT[Mod6] + ColSel[GN-1] + RowSel[clk_cnt39];
 			
-			bram_fsm <= 2;
+			bram_fsm <= 1;
 		end
 		
-		2: begin// wait until data is stable to read, and move forward the main fsm, By the time that main fsm is moved to stage 2, the data is ready to read.
-			bram_fsm <= 1;
+		1: begin// wait until data is stable to read, and move forward the main fsm, By the time that main fsm is moved to stage 2, the data is ready to read.
+			bram_fsm <= 0;
 			main_fsm <= 2;
 		end
 		
@@ -312,10 +345,11 @@ if(SCS) begin // Gating with SCS pin, will start when Host release CS pin.
 			GN <= GN + 1;// move to next grid.
 			if(GN == 52)begin// On next clock cycle, reset Grid Number to 1
 				GN <= 1;
+				EOF <= 1;// send end of frame interrupt signal to host.
 			end
 		end
 		else begin
-			main_fsm <= 1;// back to BRAM write read address.
+			main_fsm <= 1;// back to BRAM read address.
 		end
 	
 		// Mod 6 counter, 0 1 2 3 4 5 then back to 0 
